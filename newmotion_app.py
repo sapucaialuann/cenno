@@ -27,7 +27,9 @@ VERSION = "0.1.0"
 SUPPORT_DIR = os.path.expanduser(f"~/Library/Application Support/{APP_NAME}")
 LOG_PATH = os.path.expanduser(f"~/Library/Logs/{APP_NAME}.log")
 SETTINGS_PATH = os.path.join(SUPPORT_DIR, "settings.json")
-DEFAULT_SETTINGS = {"preview": True, "mouse": True, "help_overlay": False}
+DEFAULT_SETTINGS = {"preview": True, "mouse": True}
+PREVIEW_W, PREVIEW_H = 280, 210        # floating corner preview (points)
+PREVIEW_MARGIN = 12
 
 POINTER_EVENTS = ("pointer_move", "pointer_end", "click", "mouse_down", "mouse_up")
 
@@ -76,8 +78,16 @@ def accessibility_trusted(prompt=False):
                                          kAXTrustedCheckOptionPrompt)
         return bool(AXIsProcessTrustedWithOptions({kAXTrustedCheckOptionPrompt: prompt}))
     except Exception as exc:
+        print(f"WARN: pyobjc accessibility check failed ({exc}); using ctypes")
+    try:
+        import ctypes
+        hi = ctypes.cdll.LoadLibrary(
+            "/System/Library/Frameworks/ApplicationServices.framework/ApplicationServices")
+        hi.AXIsProcessTrusted.restype = ctypes.c_bool
+        return bool(hi.AXIsProcessTrusted())
+    except Exception as exc:
         print(f"WARN: accessibility check unavailable: {exc}")
-        return True
+        return False
 
 
 def camera_authorized():
@@ -120,6 +130,7 @@ class Tracker(threading.Thread):
         self.status = "Starting camera..."
         self.last_action, self.last_action_time = "", -1e9
         self.fps = 0.0
+        self.camera_requested = False
 
     # --- helpers ---
     def set_paused(self, paused):
@@ -161,7 +172,9 @@ class Tracker(threading.Thread):
                         continue
                     if perm == "undetermined":
                         self.status = "Waiting for camera permission"
-                        request_camera()
+                        if not self.camera_requested:
+                            self.camera_requested = True
+                            request_camera()
                         time.sleep(1.0)
                         continue
                     cap = self._open_camera(cv2)
@@ -219,38 +232,102 @@ class Tracker(threading.Thread):
                     self.fps, frames, fps_t0 = frames / (now - fps_t0), 0, now
 
                 if self.settings["preview"]:
-                    self._draw_hud(cv2, drawing, mp_hands, frame, hl, pts, now)
+                    jpg = self._make_preview(cv2, drawing, mp_hands, frame, hl, now)
                     with self.lock:
-                        self.preview_frame = frame
+                        self.preview_frame = jpg
         finally:
             if cap is not None:
                 cap.release()
             hands.close()
 
-    def _draw_hud(self, cv2, drawing, mp_hands, frame, hl, pts, now):
+    def _make_preview(self, cv2, drawing, mp_hands, frame, hl, now):
+        """Small preview with a compact HUD, encoded as JPEG for the panel."""
         h, w = frame.shape[:2]
-        font = cv2.FONT_HERSHEY_SIMPLEX
-
-        def text(s, y, scale=0.5, color=(230, 230, 230), thick=1, x=10):
-            cv2.putText(frame, s, (x + 1, y + 1), font, scale, (0, 0, 0), thick, cv2.LINE_AA)
-            cv2.putText(frame, s, (x, y), font, scale, color, thick, cv2.LINE_AA)
-
         if hl is not None:
             drawing.draw_landmarks(frame, hl, mp_hands.HAND_CONNECTIONS)
             if self.engine.pose == "point" and self.settings["mouse"]:
                 x0, y0, x1, y1 = core.POINTER_BOX
                 cv2.rectangle(frame, (int(x0 * w), int(y0 * h)),
-                              (int(x1 * w), int(y1 * h)), (0, 255, 255), 1)
+                              (int(x1 * w), int(y1 * h)), (0, 255, 255), 2)
+        # Render at 2x the panel size so it stays sharp on Retina screens.
+        small = cv2.resize(frame, (PREVIEW_W * 2, PREVIEW_H * 2), interpolation=cv2.INTER_AREA)
+        sh, sw = small.shape[:2]
+        font = cv2.FONT_HERSHEY_SIMPLEX
+
+        def text(s, x, y, scale, color, thick):
+            cv2.putText(small, s, (x + 2, y + 2), font, scale, (0, 0, 0), thick, cv2.LINE_AA)
+            cv2.putText(small, s, (x, y), font, scale, color, thick, cv2.LINE_AA)
+
         paused = self.engine.paused
-        text(f"{'PAUSED' if paused else 'ACTIVE'}  {self.engine.pose}", 25, 0.6,
+        pose = self.engine.pose if self.engine.pose != "none" else "no hand"
+        text("PAUSED" if paused else pose, 16, 38, 0.9,
              (80, 80, 255) if paused else (255, 255, 255), 2)
         if now - self.last_action_time < core.ACTION_FLASH_SECONDS:
-            text(self.last_action, 55, 0.8, (0, 255, 0), 2)
-        if self.settings["help_overlay"]:
-            y0 = h - 20 - 18 * len(core.HELP_LINES)
-            for i, line in enumerate(core.HELP_LINES):
-                text(line, y0 + 18 * i, 0.45)
-        text(f"{self.fps:4.1f} fps", h - 10, 0.4, (180, 180, 180))
+            (tw, _), _ = cv2.getTextSize(self.last_action, font, 1.1, 3)
+            text(self.last_action, max(10, (sw - tw) // 2), sh - 24, 1.1, (90, 255, 90), 3)
+        if paused:
+            cv2.rectangle(small, (0, 0), (sw - 1, sh - 1), (80, 80, 255), 6)
+        ok, jpg = cv2.imencode(".jpg", small, [cv2.IMWRITE_JPEG_QUALITY, 80])
+        return jpg.tobytes() if ok else None
+
+
+class MiniPreview:
+    """Borderless floating panel in the top-right corner: above all apps, on
+    every Space (also over full-screen apps), and clicks pass through it."""
+
+    def __init__(self):
+        import AppKit
+        self.AK = AppKit
+        style = AppKit.NSWindowStyleMaskBorderless | AppKit.NSWindowStyleMaskNonactivatingPanel
+        panel = AppKit.NSPanel.alloc().initWithContentRect_styleMask_backing_defer_(
+            ((0, 0), (PREVIEW_W, PREVIEW_H)), style, AppKit.NSBackingStoreBuffered, False)
+        panel.setLevel_(AppKit.NSStatusWindowLevel)
+        panel.setCollectionBehavior_(
+            AppKit.NSWindowCollectionBehaviorCanJoinAllSpaces
+            | AppKit.NSWindowCollectionBehaviorStationary
+            | AppKit.NSWindowCollectionBehaviorFullScreenAuxiliary
+            | AppKit.NSWindowCollectionBehaviorIgnoresCycle)
+        panel.setOpaque_(False)
+        panel.setBackgroundColor_(AppKit.NSColor.clearColor())
+        panel.setHasShadow_(True)
+        panel.setIgnoresMouseEvents_(True)
+        panel.setHidesOnDeactivate_(False)
+        panel.setFloatingPanel_(True)
+        panel.setAlphaValue_(0.94)
+        view = AppKit.NSImageView.alloc().initWithFrame_(((0, 0), (PREVIEW_W, PREVIEW_H)))
+        view.setImageScaling_(AppKit.NSImageScaleAxesIndependently)
+        view.setWantsLayer_(True)
+        view.layer().setCornerRadius_(14)
+        view.layer().setMasksToBounds_(True)
+        view.layer().setBackgroundColor_(AppKit.NSColor.blackColor().CGColor())
+        panel.setContentView_(view)
+        self.panel, self.view = panel, view
+        self.visible = False
+        self.place()
+
+    def place(self):
+        """Top-right corner of the main screen, just under the menu bar."""
+        vf = self.AK.NSScreen.mainScreen().visibleFrame()
+        x = vf.origin.x + vf.size.width - PREVIEW_W - PREVIEW_MARGIN
+        y = vf.origin.y + vf.size.height - PREVIEW_H - PREVIEW_MARGIN
+        self.panel.setFrameOrigin_((x, y))
+
+    def show(self):
+        if not self.visible:
+            self.place()
+            self.panel.orderFrontRegardless()
+            self.visible = True
+
+    def hide(self):
+        if self.visible:
+            self.panel.orderOut_(None)
+            self.visible = False
+
+    def set_jpeg(self, data):
+        nsdata = self.AK.NSData.dataWithBytes_length_(data, len(data))
+        img = self.AK.NSImage.alloc().initWithData_(nsdata)
+        if img is not None:
+            self.view.setImage_(img)
 
 
 # =============================================================================
@@ -262,14 +339,15 @@ class NewMotionApp(rumps.App):
         super().__init__(APP_NAME, title="✋", quit_button=None)
         self.settings = load_settings()
         self.tracker = Tracker(self.settings)
-        self.preview_open = False
+        self.preview = None
         self.icon_set = False
+        self.ax_ok = None
 
         self.status_item = rumps.MenuItem("Starting...")
         self.pause_item = rumps.MenuItem("Pause gestures", callback=self.toggle_pause, key="p")
-        self.preview_item = rumps.MenuItem("Show camera preview", callback=self.toggle_preview)
+        self.preview_item = rumps.MenuItem("Show camera preview (top right)", callback=self.toggle_preview)
         self.mouse_item = rumps.MenuItem("Mouse control (point + pinch)", callback=self.toggle_mouse)
-        self.help_item = rumps.MenuItem("Gesture help on preview", callback=self.toggle_help)
+        self.ax_item = rumps.MenuItem("Allow Accessibility...", callback=self.fix_accessibility)
         self.login_item = rumps.MenuItem("Open at login", callback=self.toggle_login)
         gestures = rumps.MenuItem("Gestures")
         for line in core.HELP_LINES:
@@ -281,8 +359,8 @@ class NewMotionApp(rumps.App):
                                  callback=lambda _: open_settings_pane("Privacy_Accessibility")))
         perms.add(rumps.MenuItem("Open log file",
                                  callback=lambda _: os.system(f"open -a Console '{LOG_PATH}'")))
-        self.menu = [self.status_item, None, self.pause_item, self.preview_item,
-                     self.mouse_item, self.help_item, None, gestures, perms,
+        self.menu = [self.status_item, self.ax_item, None, self.pause_item, self.preview_item,
+                     self.mouse_item, None, gestures, perms,
                      self.login_item, None,
                      rumps.MenuItem(f"About {APP_NAME} {VERSION}"),
                      rumps.MenuItem("Quit newMotion", callback=self.quit_app, key="q")]
@@ -300,7 +378,6 @@ class NewMotionApp(rumps.App):
         self.pause_item.state = int(self.tracker.engine.paused)
         self.preview_item.state = int(self.settings["preview"])
         self.mouse_item.state = int(self.settings["mouse"])
-        self.help_item.state = int(self.settings["help_overlay"])
         self.login_item.state = int(login_item_enabled())
 
     def _set_icon(self, paused):
@@ -322,20 +399,22 @@ class NewMotionApp(rumps.App):
 
     # --- timers (main thread) ---
     def tick_ui(self, _):
-        if not self.perm_checked:
-            self.perm_checked = True
-            if not accessibility_trusted(prompt=True):
-                try:
-                    rumps.notification(APP_NAME, "Allow Accessibility",
-                                       "newMotion needs Accessibility access to switch Spaces, "
-                                       "scroll and move the mouse. Enable it in System Settings, "
-                                       "then reopen newMotion.")
-                except Exception as exc:
-                    print(f"WARN: notification failed: {exc}")
-        status = self.tracker.status
-        if not accessibility_trusted():
-            status += " (needs Accessibility)"
-        self.status_item.title = status
+        if self.ax_ok is None:
+            # First tick: ask macOS (shows its own prompt if it can) and,
+            # if still not allowed, explain and offer to open the settings.
+            self.ax_ok = accessibility_trusted(prompt=True)
+            print(f"accessibility trusted at start: {self.ax_ok}")
+            if not self.ax_ok:
+                self.fix_accessibility(None)
+        else:
+            ok = accessibility_trusted()
+            if ok and not self.ax_ok:
+                print("accessibility granted")
+                self._notify("newMotion is ready", "Accessibility is on. Gestures can now control your Mac.")
+            self.ax_ok = ok
+        self.ax_item.title = ("Allow Accessibility... (required)" if not self.ax_ok
+                              else "Accessibility: allowed")
+        self.status_item.title = self.tracker.status
         paused = self.tracker.engine.paused
         if self.pause_item.state != int(paused):
             self.pause_item.state = int(paused)
@@ -344,32 +423,47 @@ class NewMotionApp(rumps.App):
             self._set_icon(paused)
 
     def tick_preview(self, _):
-        import cv2
+        if self.preview is None:
+            try:
+                self.preview = MiniPreview()
+            except Exception:
+                print("WARN: preview unavailable:\n" + traceback.format_exc())
+                self.settings["preview"] = False
+                self._sync_checks()
+                self.preview = False
+                return
+        if self.preview is False:
+            return
         if not self.settings["preview"]:
-            if self.preview_open:
-                cv2.destroyWindow(core.WINDOW_TITLE)
-                cv2.waitKey(1)
-                self.preview_open = False
+            self.preview.hide()
             return
         with self.tracker.lock:
-            frame = self.tracker.preview_frame
+            jpg = self.tracker.preview_frame
             self.tracker.preview_frame = None
-        if frame is None:
-            return
-        cv2.imshow(core.WINDOW_TITLE, frame)
-        self.preview_open = True
-        key = cv2.waitKey(1) & 0xFF
-        if key == ord("p"):
-            self.toggle_pause(None)
-        # Closing the window with the red button turns the preview off.
+        if jpg:
+            self.preview.set_jpeg(jpg)
+            self.preview.show()
+
+    def _notify(self, title, msg):
         try:
-            if cv2.getWindowProperty(core.WINDOW_TITLE, cv2.WND_PROP_VISIBLE) < 1:
-                self.settings["preview"] = False
-                save_settings(self.settings)
-                self._sync_checks()
-                self.preview_open = False
-        except cv2.error:
-            pass
+            rumps.notification(APP_NAME, title, msg)
+        except Exception as exc:
+            print(f"WARN: notification failed: {exc}")
+
+    def fix_accessibility(self, _):
+        if accessibility_trusted():
+            rumps.alert(APP_NAME, "Accessibility is already allowed.")
+            return
+        choice = rumps.alert(
+            title="Allow newMotion to control your Mac",
+            message=("newMotion needs Accessibility access to switch Spaces, scroll, "
+                     "change volume and move the mouse.\n\n"
+                     "1. Click Open Settings.\n"
+                     "2. Turn on newMotion in the list (use + to add it if it is missing).\n"
+                     "3. Gestures start working right away."),
+            ok="Open Settings", cancel="Later")
+        if choice == 1:
+            open_settings_pane("Privacy_Accessibility")
 
     # --- callbacks ---
     def toggle_pause(self, _):
@@ -385,11 +479,6 @@ class NewMotionApp(rumps.App):
         self.settings["mouse"] = not self.settings["mouse"]
         if not self.settings["mouse"]:
             self.tracker.dispatcher.submit("pointer_end", None)
-        save_settings(self.settings)
-        self._sync_checks()
-
-    def toggle_help(self, _):
-        self.settings["help_overlay"] = not self.settings["help_overlay"]
         save_settings(self.settings)
         self._sync_checks()
 
