@@ -1,15 +1,40 @@
 # newMotion
 
-Hand-gesture control for macOS using the webcam (MediaPipe + OpenCV).
+Control your Mac with hand gestures through the webcam. Runs fully on your Mac (MediaPipe + OpenCV); video never leaves the machine.
 
-Two versions:
+## Install (macOS, Apple Silicon)
 
-- `hand_desktop_switcher.py`: baseline. Four-finger swipe between Spaces, OK-sign twist for volume, two-finger scroll.
-- `hand_desktop_switcher_claude.py`: swipes between Spaces, Mission Control and App windows, two-finger scroll with momentum, back/forward, OK-sign volume knob, thumbs-up play/pause, gather for Spotlight, fist to pause, and mouse control (point to move, pinch to click, hold to drag).
+1. Download `newMotion-<version>.dmg` from the Releases page, open it and drag **newMotion** into **Applications**.
+2. The app isn't notarized by Apple yet, so the first launch is blocked. Open it once, then go to **System Settings > Privacy & Security** and click **Open Anyway**.
+3. Allow **Camera** when asked.
+4. Enable newMotion under **System Settings > Privacy & Security > Accessibility** (needed to send shortcuts, scroll and move the mouse), then reopen it.
+5. In **System Settings > Keyboard > Keyboard Shortcuts > Mission Control**, make sure "Move left/right a space", "Mission Control" and "Application windows" are on.
 
-## Run
+newMotion lives in the menu bar (hand icon): pause, camera preview, mouse control on/off, open at login, gesture list.
 
-    pip install "mediapipe<0.10.10" opencv-python pyautogui
-    python3 hand_desktop_switcher_claude.py
+## Gestures
 
-Grant Camera and Accessibility permission to the terminal running Python, and enable the Mission Control keyboard shortcuts (Ctrl+Arrow) in System Settings.
+| Gesture | Action |
+|---|---|
+| Open hand swipe right / left | Previous / next Space |
+| Open hand swipe up / down | Mission Control / App windows (down again closes) |
+| Two fingers up/down, flick | Scroll with momentum |
+| Two-finger swipe right / left | Back / Forward |
+| Point with index | Move the cursor |
+| Pinch while pointing | Click; twice = double-click; hold = drag |
+| OK sign + twist | Volume |
+| Thumbs up (hold) | Play / pause |
+| Open hand then gather fingertips | Spotlight |
+| Fist (hold 1.5 s) | Pause / resume gestures |
+
+## Files
+
+- `newmotion_app.py`: the menu bar app.
+- `hand_desktop_switcher_claude.py`: gesture engine (also runs standalone with a preview window).
+- `hand_desktop_switcher.py`: simpler baseline version.
+- `build_mac.sh`, `newMotion.spec`, `requirements-build.txt`: build the app and DMG (`./build_mac.sh`).
+
+## Run from source
+
+    pip install "mediapipe==0.10.9" opencv-python pyautogui rumps pyobjc-framework-Quartz pyobjc-framework-AVFoundation pyobjc-framework-ServiceManagement matplotlib
+    python3 newmotion_app.py

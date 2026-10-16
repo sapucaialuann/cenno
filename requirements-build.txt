@@ -1,0 +1,11 @@
+mediapipe==0.10.9
+opencv-python==4.10.0.84
+pyautogui
+rumps
+pyinstaller
+pyobjc-framework-Quartz
+pyobjc-framework-Cocoa
+pyobjc-framework-AVFoundation
+pyobjc-framework-ApplicationServices
+pyobjc-framework-ServiceManagement
+matplotlib
