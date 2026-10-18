@@ -27,9 +27,12 @@ VERSION = "0.1.0"
 SUPPORT_DIR = os.path.expanduser(f"~/Library/Application Support/{APP_NAME}")
 LOG_PATH = os.path.expanduser(f"~/Library/Logs/{APP_NAME}.log")
 SETTINGS_PATH = os.path.join(SUPPORT_DIR, "settings.json")
-DEFAULT_SETTINGS = {"preview": True, "mouse": True}
+DEFAULT_SETTINGS = {"enabled": True, "preview": True, "mouse": True,
+                    "preview_corner": "top_right"}
 PREVIEW_W, PREVIEW_H = 280, 210        # floating corner preview (points)
 PREVIEW_MARGIN = 12
+CORNERS = (("top_right", "Top right (default)"), ("top_left", "Top left"),
+           ("bottom_right", "Bottom right"), ("bottom_left", "Bottom left"))
 
 POINTER_EVENTS = ("pointer_move", "pointer_end", "click", "mouse_down", "mouse_up")
 
@@ -164,6 +167,17 @@ class Tracker(threading.Thread):
         frames, fps_t0 = 0, time.monotonic()
         try:
             while not self.stop_flag.is_set():
+                if not self.settings["enabled"]:
+                    # Switched off: release the camera (its light goes off).
+                    if cap is not None:
+                        cap.release()
+                        cap = None
+                        self.dispatcher.submit("pointer_end", None)
+                    self.status = "Off"
+                    with self.lock:
+                        self.preview_frame = None
+                    time.sleep(0.2)
+                    continue
                 if cap is None or not cap.isOpened():
                     perm = camera_authorized()
                     if perm == "denied":
@@ -272,12 +286,13 @@ class Tracker(threading.Thread):
 
 
 class MiniPreview:
-    """Borderless floating panel in the top-right corner: above all apps, on
+    """Borderless floating panel in a screen corner: above all apps, on
     every Space (also over full-screen apps), and clicks pass through it."""
 
-    def __init__(self):
+    def __init__(self, corner="top_right"):
         import AppKit
         self.AK = AppKit
+        self.corner = corner
         style = AppKit.NSWindowStyleMaskBorderless | AppKit.NSWindowStyleMaskNonactivatingPanel
         panel = AppKit.NSPanel.alloc().initWithContentRect_styleMask_backing_defer_(
             ((0, 0), (PREVIEW_W, PREVIEW_H)), style, AppKit.NSBackingStoreBuffered, False)
@@ -306,11 +321,20 @@ class MiniPreview:
         self.place()
 
     def place(self):
-        """Top-right corner of the main screen, just under the menu bar."""
+        """Chosen corner of the main screen (top corners sit under the menu
+        bar, bottom corners above the Dock)."""
         vf = self.AK.NSScreen.mainScreen().visibleFrame()
-        x = vf.origin.x + vf.size.width - PREVIEW_W - PREVIEW_MARGIN
-        y = vf.origin.y + vf.size.height - PREVIEW_H - PREVIEW_MARGIN
+        left = self.corner.endswith("left")
+        top = self.corner.startswith("top")
+        x = vf.origin.x + (PREVIEW_MARGIN if left
+                           else vf.size.width - PREVIEW_W - PREVIEW_MARGIN)
+        y = vf.origin.y + (vf.size.height - PREVIEW_H - PREVIEW_MARGIN if top
+                           else PREVIEW_MARGIN)
         self.panel.setFrameOrigin_((x, y))
+
+    def set_corner(self, corner):
+        self.corner = corner
+        self.place()
 
     def show(self):
         if not self.visible:
@@ -345,7 +369,17 @@ class NewMotionApp(rumps.App):
 
         self.status_item = rumps.MenuItem("Starting...")
         self.pause_item = rumps.MenuItem("Pause gestures", callback=self.toggle_pause, key="p")
-        self.preview_item = rumps.MenuItem("Show camera preview (top right)", callback=self.toggle_preview)
+        self.enabled_item = rumps.MenuItem("newMotion on", callback=self.toggle_enabled, key="o")
+        self.preview_menu = rumps.MenuItem("Camera preview")
+        self.preview_item = rumps.MenuItem("Show preview", callback=self.toggle_preview)
+        self.preview_menu.add(self.preview_item)
+        self.preview_menu.add(rumps.MenuItem("Position:"))
+        self.corner_items = {}
+        for key, label in CORNERS:
+            item = rumps.MenuItem(label, callback=self.set_corner)
+            item.corner_key = key
+            self.preview_menu.add(item)
+            self.corner_items[key] = item
         self.mouse_item = rumps.MenuItem("Mouse control (point + pinch)", callback=self.toggle_mouse)
         self.ax_item = rumps.MenuItem("Allow Accessibility...", callback=self.fix_accessibility)
         self.login_item = rumps.MenuItem("Open at login", callback=self.toggle_login)
@@ -359,7 +393,8 @@ class NewMotionApp(rumps.App):
                                  callback=lambda _: open_settings_pane("Privacy_Accessibility")))
         perms.add(rumps.MenuItem("Open log file",
                                  callback=lambda _: os.system(f"open -a Console '{LOG_PATH}'")))
-        self.menu = [self.status_item, self.ax_item, None, self.pause_item, self.preview_item,
+        self.menu = [self.status_item, self.ax_item, None, self.enabled_item,
+                     self.pause_item, self.preview_menu,
                      self.mouse_item, None, gestures, perms,
                      self.login_item, None,
                      rumps.MenuItem(f"About {APP_NAME} {VERSION}"),
@@ -377,6 +412,9 @@ class NewMotionApp(rumps.App):
     def _sync_checks(self):
         self.pause_item.state = int(self.tracker.engine.paused)
         self.preview_item.state = int(self.settings["preview"])
+        self.enabled_item.state = int(self.settings["enabled"])
+        for key, item in self.corner_items.items():
+            item.state = int(self.settings["preview_corner"] == key)
         self.mouse_item.state = int(self.settings["mouse"])
         self.login_item.state = int(login_item_enabled())
 
@@ -418,14 +456,15 @@ class NewMotionApp(rumps.App):
         paused = self.tracker.engine.paused
         if self.pause_item.state != int(paused):
             self.pause_item.state = int(paused)
-        if not self.icon_set or getattr(self, "_icon_paused", None) != paused:
-            self._icon_paused = paused
-            self._set_icon(paused)
+        dim = paused or not self.settings["enabled"]
+        if not self.icon_set or getattr(self, "_icon_paused", None) != dim:
+            self._icon_paused = dim
+            self._set_icon(dim)
 
     def tick_preview(self, _):
         if self.preview is None:
             try:
-                self.preview = MiniPreview()
+                self.preview = MiniPreview(self.settings["preview_corner"])
             except Exception:
                 print("WARN: preview unavailable:\n" + traceback.format_exc())
                 self.settings["preview"] = False
@@ -434,7 +473,7 @@ class NewMotionApp(rumps.App):
                 return
         if self.preview is False:
             return
-        if not self.settings["preview"]:
+        if not (self.settings["preview"] and self.settings["enabled"]):
             self.preview.hide()
             return
         with self.tracker.lock:
@@ -473,6 +512,18 @@ class NewMotionApp(rumps.App):
     def toggle_preview(self, _):
         self.settings["preview"] = not self.settings["preview"]
         save_settings(self.settings)
+        self._sync_checks()
+
+    def toggle_enabled(self, _):
+        self.settings["enabled"] = not self.settings["enabled"]
+        save_settings(self.settings)
+        self._sync_checks()
+
+    def set_corner(self, sender):
+        self.settings["preview_corner"] = sender.corner_key
+        save_settings(self.settings)
+        if self.preview:
+            self.preview.set_corner(sender.corner_key)
         self._sync_checks()
 
     def toggle_mouse(self, _):

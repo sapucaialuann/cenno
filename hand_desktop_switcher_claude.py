@@ -103,6 +103,8 @@ GATHER_MAX_SPREAD = 0.22      # all fingertips within this spread = gather
 THUMB_UP_MIN_LEN = 0.60       # thumb tip to thumb MCP, palms
 THUMB_UP_MARGIN = 0.15        # thumb tip must be this far above everything
 POSE_STABLE_FRAMES = 3        # frames a pose must persist before it counts
+SHAKA_MIN_SPAN = 0.95         # hang loose: thumb tip to pinky tip, palms
+SHAKA_HOLD_SECONDS = 0.4      # hold hang loose this long to toggle dictation
 
 # --- Motion units ---
 # Motion is measured in palms, but a hand close to the camera has a huge
@@ -254,7 +256,7 @@ def finger_ratio(pts, finger):
 
 def classify_pose(pts, palm):
     """Return (pose, features).  Poses: ok, gather, point, thumbs_up, fist,
-    two, open, other."""
+    shaka (hang loose), two, open, other."""
     ratios = {f: finger_ratio(pts, f) for f in FINGERS}
     ext = {f: r >= EXTENDED_RATIO for f, r in ratios.items()}
     curl = {f: r <= CURLED_RATIO for f, r in ratios.items()}
@@ -273,6 +275,11 @@ def classify_pose(pts, palm):
             and ratios["index"] >= POINT_INDEX_MIN_RATIO):
         # Pointing, with or without the thumb pinched onto the index.
         return "point", feats
+    if (curl["index"] and curl["middle"] and curl["ring"] and ext["pinky"]
+            and dist(pts[4], pts[2]) / palm >= THUMB_UP_MIN_LEN
+            and dist(pts[4], pts[20]) / palm >= SHAKA_MIN_SPAN):
+        # Hang loose: thumb and pinky out, the three middle fingers curled.
+        return "shaka", feats
     if all(curl.values()):
         thumb_len = dist(pts[4], pts[2]) / palm
         highest_other = min(p[1] for i, p in enumerate(pts) if i not in (3, 4))
@@ -460,6 +467,9 @@ class GestureEngine:
                 self.latched = True
             elif self.pose == "thumbs_up" and held >= THUMBS_UP_HOLD_SECONDS:
                 ev.append(("play_pause", 1))
+                self.latched = True
+            elif self.pose == "shaka" and held >= SHAKA_HOLD_SECONDS:
+                ev.append(("dictation", 1))
                 self.latched = True
 
         # Entry warm-up: hand fully inside the frame for a moment.
@@ -799,6 +809,9 @@ class Dispatcher:
     def _do(self, name, n):
         if name.startswith("pause"):
             return
+        if name == "dictation":
+            self._toggle_dictation()
+            return
         if name in MEDIA_KEYS:
             pag_key, nx = MEDIA_KEYS[name]
             for _ in range(n):
@@ -816,6 +829,41 @@ class Dispatcher:
         # everything comes back up.  macOS only fires Space switching
         # (Ctrl+Arrow) when Control is actually held, not just flagged.
         self.pag.hotkey(*[PYAUTOGUI_NAMES.get(k, k) for k in keys], interval=0.01)
+
+    # Menu titles that mean Start / Stop Dictation (en, de, pt, es, fr).
+    DICTATION_WORDS = ("dictation", "diktat", "ditado", "dictado", "dict\u00e9e")
+
+    def _toggle_dictation(self):
+        """Press Edit > Start / Stop Dictation in the frontmost app through the
+        Accessibility API.  Works whatever the Dictation keyboard shortcut is."""
+        if self.appkit is None:
+            return
+        try:
+            import ApplicationServices as AS
+        except ImportError:
+            print("WARN: dictation needs pyobjc ApplicationServices")
+            return
+        app = self.appkit.NSWorkspace.sharedWorkspace().frontmostApplication()
+        name = app.localizedName()
+
+        def attr(el, key):
+            err, val = AS.AXUIElementCopyAttributeValue(el, key, None)
+            return val if err == 0 else None
+
+        bar = attr(AS.AXUIElementCreateApplication(app.processIdentifier()),
+                   AS.kAXMenuBarAttribute)
+        tops = (attr(bar, AS.kAXChildrenAttribute) or []) if bar is not None else []
+        for top in tops:
+            for menu in attr(top, AS.kAXChildrenAttribute) or []:
+                for item in attr(menu, AS.kAXChildrenAttribute) or []:
+                    title = str(attr(item, AS.kAXTitleAttribute) or "").lower()
+                    if (any(w in title for w in self.DICTATION_WORDS)
+                            and attr(item, AS.kAXEnabledAttribute)):
+                        AS.AXUIElementPerformAction(item, AS.kAXPressAction)
+                        print(f"dictation: pressed '{title}' in {name}")
+                        return
+        print(f"dictation: no Dictation menu item in {name} "
+              "(is Dictation on in System Settings > Keyboard?)")
 
     def _mac_media_key(self, code):
         A, Q = self.appkit, self.quartz
@@ -1070,6 +1118,7 @@ HELP_LINES = (
     "pinch while pointing    click (x2 / hold=drag)",
     "OK sign + twist         volume",
     "thumbs up (hold)        play / pause",
+    "hang loose (hold)       dictation on / off",
     "open -> gather tips     Spotlight",
     "fist (hold)             pause gestures",
     "key t: test Space switch (no gesture)",
@@ -1080,7 +1129,7 @@ ACTION_LABELS = {
     "overview": "MISSION CONTROL", "app_windows": "APP WINDOWS",
     "close_overview": "CLOSE OVERVIEW", "back": "BACK", "forward": "FORWARD",
     "launcher": "SPOTLIGHT", "volume_up": "VOLUME +", "volume_down": "VOLUME -",
-    "play_pause": "PLAY / PAUSE", "scroll_drag": "SCROLL", "scroll_fling": "FLICK",
+    "play_pause": "PLAY / PAUSE", "dictation": "DICTATION", "scroll_drag": "SCROLL", "scroll_fling": "FLICK",
     "pause_on": "GESTURES PAUSED", "pause_off": "GESTURES ON",
     "click": "CLICK", "mouse_down": "DRAG", "mouse_up": "DROP",
 }

@@ -10,7 +10,7 @@ Control your Mac with hand gestures through the webcam. Runs fully on your Mac (
 4. Enable newMotion under **System Settings > Privacy & Security > Accessibility** (needed to send shortcuts, scroll and move the mouse), then reopen it.
 5. In **System Settings > Keyboard > Keyboard Shortcuts > Mission Control**, make sure "Move left/right a space", "Mission Control" and "Application windows" are on.
 
-newMotion lives in the menu bar (hand icon): pause, camera preview, mouse control on/off, open at login, gesture list.
+newMotion lives in the menu bar (hand icon): on/off (turns the camera off without quitting), pause, camera preview on/off and corner position, mouse control on/off, open at login, gesture list.
 
 ## Gestures
 
@@ -24,6 +24,7 @@ newMotion lives in the menu bar (hand icon): pause, camera preview, mouse contro
 | Pinch while pointing | Click; twice = double-click; hold = drag |
 | OK sign + twist | Volume |
 | Thumbs up (hold) | Play / pause |
+| Hang loose (hold) | Dictation on / off |
 | Open hand then gather fingertips | Spotlight |
 | Fist (hold 1.5 s) | Pause / resume gestures |
 
