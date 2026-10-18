@@ -27,6 +27,7 @@ VERSION = "0.1.0"
 SUPPORT_DIR = os.path.expanduser(f"~/Library/Application Support/{APP_NAME}")
 LOG_PATH = os.path.expanduser(f"~/Library/Logs/{APP_NAME}.log")
 SETTINGS_PATH = os.path.join(SUPPORT_DIR, "settings.json")
+SUPPORT_URL = "https://ko-fi.com/sapucaialuann"
 DEFAULT_SETTINGS = {"enabled": True, "preview": True, "mouse": True,
                     "preview_corner": "top_right",
                     "dictation": "auto", "dictation_shortcut": ""}
@@ -408,6 +409,8 @@ class NewMotionApp(rumps.App):
                      self.pause_item, self.preview_menu,
                      self.mouse_item, self.dictation_menu, None, gestures, perms,
                      self.login_item, None,
+                     rumps.MenuItem("Support newMotion ☕",
+                                    callback=lambda _: os.system(f"open '{SUPPORT_URL}'")),
                      rumps.MenuItem(f"About {APP_NAME} {VERSION}"),
                      rumps.MenuItem("Quit newMotion", callback=self.quit_app, key="q")]
         self._sync_checks()

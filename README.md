@@ -47,3 +47,7 @@ Voice Control > Commands > +): phrase "newMotion on", action **Open URL**,
 
     pip install "mediapipe==0.10.9" opencv-python pyautogui rumps pyobjc-framework-Quartz pyobjc-framework-AVFoundation pyobjc-framework-ServiceManagement matplotlib
     python3 newmotion_app.py
+
+## Support
+
+newMotion is free. If you enjoy it, you can support it at [ko-fi.com/sapucaialuann](https://ko-fi.com/sapucaialuann) (also in the menu bar: Support newMotion).
