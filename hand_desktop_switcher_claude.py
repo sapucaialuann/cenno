@@ -202,6 +202,7 @@ VOLUME_DIRECTION = 1           # flip to -1 if clockwise feels backwards
 
 # --- Hold / transition gestures ---
 THUMBS_UP_HOLD_SECONDS = 0.5
+THUMBS_DOWN_HOLD_SECONDS = 0.5  # thumbs down: undo (deletes dictated text)
 GATHER_FROM_OPEN_WINDOW = 0.6  # gather must follow an open hand within this
 FIST_PAUSE_HOLD_SECONDS = 1.5  # set to 0 to disable the pause gesture
 
@@ -287,6 +288,10 @@ def classify_pose(pts, palm):
         if (thumb_len >= THUMB_UP_MIN_LEN
                 and pts[4][1] < highest_other - THUMB_UP_MARGIN * palm):
             return "thumbs_up", feats
+        lowest_other = max(p[1] for i, p in enumerate(pts) if i not in (3, 4))
+        if (thumb_len >= THUMB_UP_MIN_LEN
+                and pts[4][1] > lowest_other + THUMB_UP_MARGIN * palm):
+            return "thumbs_down", feats
         return "fist", feats
     if ext["index"] and ext["middle"] and curl["ring"] and curl["pinky"]:
         return "two", feats
@@ -468,6 +473,9 @@ class GestureEngine:
                 self.latched = True
             elif self.pose == "thumbs_up" and held >= THUMBS_UP_HOLD_SECONDS:
                 ev.append(("play_pause", 1))
+                self.latched = True
+            elif self.pose == "thumbs_down" and held >= THUMBS_DOWN_HOLD_SECONDS:
+                ev.append(("undo", 1))
                 self.latched = True
             elif self.pose == "shaka" and held >= SHAKA_HOLD_SECONDS:
                 ev.append(("dictation", 1))
@@ -746,7 +754,7 @@ KEY_BINDINGS = {
         "overview": ("ctrl", "up"), "app_windows": ("ctrl", "down"),
         "close_overview": ("escape",),
         "back": ("cmd", "["), "forward": ("cmd", "]"),
-        "launcher": ("cmd", "space"),
+        "launcher": ("cmd", "space"), "undo": ("cmd", "z"),
     },
     "Windows": {
         "space_left": ("ctrl", "win", "left"), "space_right": ("ctrl", "win", "right"),
@@ -1147,6 +1155,7 @@ HELP_LINES = (
     "OK sign + twist         volume",
     "thumbs up (hold)        play / pause",
     "hang loose (hold)       dictation on / off",
+    "thumbs down (hold)      undo (delete dictated text)",
     "open -> gather tips     Spotlight",
     "fist (hold)             pause gestures",
     "key t: test Space switch (no gesture)",
@@ -1157,7 +1166,7 @@ ACTION_LABELS = {
     "overview": "MISSION CONTROL", "app_windows": "APP WINDOWS",
     "close_overview": "CLOSE OVERVIEW", "back": "BACK", "forward": "FORWARD",
     "launcher": "SPOTLIGHT", "volume_up": "VOLUME +", "volume_down": "VOLUME -",
-    "play_pause": "PLAY / PAUSE", "dictation": "DICTATION", "scroll_drag": "SCROLL", "scroll_fling": "FLICK",
+    "play_pause": "PLAY / PAUSE", "dictation": "DICTATION", "undo": "UNDO", "scroll_drag": "SCROLL", "scroll_fling": "FLICK",
     "pause_on": "GESTURES PAUSED", "pause_off": "GESTURES ON",
     "click": "CLICK", "mouse_down": "DRAG", "mouse_up": "DROP",
 }

@@ -401,6 +401,7 @@ class NewMotionApp(rumps.App):
                      rumps.MenuItem("Quit newMotion", callback=self.quit_app, key="q")]
         self._sync_checks()
 
+        self._register_url_handler()
         self.tracker.start()
         self.ui_timer = rumps.Timer(self.tick_ui, 0.25)
         self.ui_timer.start()
@@ -515,9 +516,47 @@ class NewMotionApp(rumps.App):
         self._sync_checks()
 
     def toggle_enabled(self, _):
-        self.settings["enabled"] = not self.settings["enabled"]
+        self.set_enabled(not self.settings["enabled"])
+
+    def set_enabled(self, on):
+        if self.settings["enabled"] == on:
+            return
+        self.settings["enabled"] = on
         save_settings(self.settings)
         self._sync_checks()
+        print(f"newMotion {'on' if on else 'off'}")
+
+    def _register_url_handler(self):
+        """newmotion://on, newmotion://off, newmotion://toggle (for Voice
+        Control commands, Shortcuts, Raycast, or `open` in Terminal)."""
+        try:
+            import Foundation
+            import objc
+            app = self
+
+            def fourcc(s):
+                return int.from_bytes(s.encode(), "big")
+
+            class URLHandler(Foundation.NSObject):
+                @objc.typedSelector(b"v@:@@")
+                def handleURL_withReply_(self, event, reply):
+                    url = str(event.paramDescriptorForKeyword_(fourcc("----")).stringValue())
+                    cmd = url.split("://", 1)[-1].strip("/").lower()
+                    print(f"url command: {url}")
+                    if cmd == "on":
+                        app.set_enabled(True)
+                    elif cmd == "off":
+                        app.set_enabled(False)
+                    elif cmd == "toggle":
+                        app.set_enabled(not app.settings["enabled"])
+
+            self._url_handler = URLHandler.alloc().init()
+            Foundation.NSAppleEventManager.sharedAppleEventManager() \
+                .setEventHandler_andSelector_forEventClass_andEventID_(
+                    self._url_handler, "handleURL:withReply:",
+                    fourcc("GURL"), fourcc("GURL"))
+        except Exception:
+            print("WARN: URL handler unavailable:\n" + traceback.format_exc())
 
     def set_corner(self, sender):
         self.settings["preview_corner"] = sender.corner_key

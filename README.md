@@ -12,6 +12,13 @@ Control your Mac with hand gestures through the webcam. Runs fully on your Mac (
 
 newMotion lives in the menu bar (hand icon): on/off (turns the camera off without quitting), pause, camera preview on/off and corner position, mouse control on/off, open at login, gesture list.
 
+## Voice and URL commands
+
+newMotion responds to `newmotion://on`, `newmotion://off` and `newmotion://toggle`.
+To use your voice, add Voice Control commands (System Settings > Accessibility >
+Voice Control > Commands > +): phrase "newMotion on", action **Open URL**,
+`newmotion://on`; same for "newMotion off".
+
 ## Gestures
 
 | Gesture | Action |
@@ -24,6 +31,7 @@ newMotion lives in the menu bar (hand icon): on/off (turns the camera off withou
 | Pinch while pointing | Click; twice = double-click; hold = drag |
 | OK sign + twist | Volume |
 | Thumbs up (hold) | Play / pause |
+| Thumbs down (hold) | Undo (deletes the last dictated text) |
 | Hang loose (hold) | Dictation on / off (Wispr Flow if running, else macOS Dictation) |
 | Open hand then gather fingertips | Spotlight |
 | Fist (hold 1.5 s) | Pause / resume gestures |

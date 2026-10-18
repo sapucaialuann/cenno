@@ -43,6 +43,8 @@ app = BUNDLE(
         "NSCameraUsageDescription":
             "newMotion uses the camera to see your hand gestures. "
             "Video is processed on your Mac and never leaves it.",
+        "CFBundleURLTypes": [{"CFBundleURLName": "newMotion commands",
+                              "CFBundleURLSchemes": ["newmotion"]}],
         "NSAppleEventsUsageDescription":
             "newMotion sends keyboard shortcuts to switch Spaces and control apps.",
     },
