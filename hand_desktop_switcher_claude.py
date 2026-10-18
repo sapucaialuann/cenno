@@ -107,6 +107,28 @@ SHAKA_MIN_SPAN = 0.95         # hang loose: thumb tip to pinky tip, palms
 SHAKA_HOLD_SECONDS = 0.4      # hold hang loose this long to toggle dictation
 WISPR_BUNDLE_ID = "com.electron.wispr-flow"   # used for dictation when running
 
+# Key codes for custom dictation shortcuts (macOS virtual key codes, US layout).
+MOD_KEYS = {
+    "cmd": (55, "kCGEventFlagMaskCommand"), "command": (55, "kCGEventFlagMaskCommand"),
+    "shift": (56, "kCGEventFlagMaskShift"),
+    "option": (58, "kCGEventFlagMaskAlternate"), "alt": (58, "kCGEventFlagMaskAlternate"),
+    "opt": (58, "kCGEventFlagMaskAlternate"),
+    "ctrl": (59, "kCGEventFlagMaskControl"), "control": (59, "kCGEventFlagMaskControl"),
+    "fn": (63, "kCGEventFlagMaskSecondaryFn"),
+}
+KEY_CODES = dict(zip("asdfhgzxcv", (0, 1, 2, 3, 4, 5, 6, 7, 8, 9)))
+KEY_CODES.update({"b": 11, "q": 12, "w": 13, "e": 14, "r": 15, "y": 16, "t": 17,
+                  "1": 18, "2": 19, "3": 20, "4": 21, "6": 22, "5": 23, "9": 25,
+                  "7": 26, "8": 28, "0": 29, "o": 31, "u": 32, "i": 34, "p": 35,
+                  "l": 37, "j": 38, "k": 40, "n": 45, "m": 46,
+                  "return": 36, "enter": 36, "tab": 48, "space": 49, "escape": 53,
+                  "esc": 53, "delete": 51, "backspace": 51, "`": 50, "grave": 50,
+                  "left": 123, "right": 124, "down": 125, "up": 126,
+                  "f1": 122, "f2": 120, "f3": 99, "f4": 118, "f5": 96, "f6": 97,
+                  "f7": 98, "f8": 100, "f9": 101, "f10": 109, "f11": 103,
+                  "f12": 111, "f13": 105, "f14": 107, "f15": 113, "f16": 106,
+                  "f17": 64, "f18": 79, "f19": 80})
+
 # --- Motion units ---
 # Motion is measured in palms, but a hand close to the camera has a huge
 # palm, so swipes would need to cross half the frame.  The palm used for
@@ -852,33 +874,78 @@ class Dispatcher:
         apps = self.appkit.NSWorkspace.sharedWorkspace().runningApplications()
         return any((a.bundleIdentifier() or "") == WISPR_BUNDLE_ID for a in apps)
 
-    def _wispr_toggle(self):
-        """Wispr Flow hands-free mode: Fn+Space starts, Fn+Space again stops."""
+    # --- dictation -------------------------------------------------------
+    # mode: "auto" (Wispr Flow if running, else Apple), "wispr", "apple",
+    # or "custom" (send self.dictation_shortcut, e.g. "ctrl+option+d").
+    dictation_mode = "auto"
+    dictation_shortcut = ""
+    _apple_dictating = False
+
+    def _send_shortcut(self, spec):
+        """Post a key combo such as "fn+space" or "cmd+shift+d" as real
+        key events (works with apps that listen through event taps)."""
         Q = self.quartz
-        fn = Q.kCGEventFlagMaskSecondaryFn
+        parts = [x.strip().lower() for x in spec.replace(" ", "").split("+") if x.strip()]
+        if not parts:
+            return False
+        mods = [MOD_KEYS[m] for m in parts[:-1] if m in MOD_KEYS]
+        last = parts[-1]
+        if last in MOD_KEYS:               # modifier-only shortcut, e.g. "fn"
+            mods.append(MOD_KEYS[last])
+            key = None
+        else:
+            key = KEY_CODES.get(last)
+            if key is None:
+                print(f"dictation: unknown key '{last}' in shortcut '{spec}'")
+                return False
         src = Q.CGEventSourceCreate(Q.kCGEventSourceStateHIDSystemState)
 
-        def post(code, down, flags, kind=None):
+        def post(code, down, flags, flags_event=False):
             e = Q.CGEventCreateKeyboardEvent(src, code, down)
-            if kind is not None:
-                Q.CGEventSetType(e, kind)
+            if flags_event:
+                Q.CGEventSetType(e, Q.kCGEventFlagsChanged)
             Q.CGEventSetFlags(e, flags)
             Q.CGEventPost(Q.kCGHIDEventTap, e)
             time.sleep(0.04)
 
-        post(63, True, fn, Q.kCGEventFlagsChanged)      # Fn down
-        post(49, True, fn)                              # Space down
-        post(49, False, fn)                             # Space up
-        post(63, False, 0, Q.kCGEventFlagsChanged)      # Fn up
+        flags = 0
+        for code, mask in mods:                     # modifiers down
+            flags |= getattr(Q, mask)
+            post(code, True, flags, True)
+        if key is not None:
+            post(key, True, flags)
+            post(key, False, flags)
+        for code, mask in reversed(mods):           # modifiers up
+            flags &= ~getattr(Q, mask)
+            post(code, False, flags, True)
+        return True
+
+    def _wispr_running(self):
+        apps = self.appkit.NSWorkspace.sharedWorkspace().runningApplications()
+        return any((a.bundleIdentifier() or "") == WISPR_BUNDLE_ID for a in apps)
 
     def _toggle_dictation(self):
-        """Wispr Flow if it is running (same gesture starts and stops it),
-        otherwise press Edit > Start Dictation in the frontmost app."""
-        if self.appkit is None:
+        """Start or stop dictation with whichever tool the user picked."""
+        if self.appkit is None or self.quartz is None:
             return
-        if self.quartz is not None and self._wispr_running():
-            self._wispr_toggle()
-            print("dictation: toggled Wispr Flow (Fn+Space)")
+        mode = self.dictation_mode
+        if mode == "auto":
+            mode = "wispr" if self._wispr_running() else "apple"
+        if mode == "wispr":
+            self._send_shortcut("fn+space")       # Wispr Flow hands-free toggle
+            print("dictation: toggled Wispr Flow (fn+space)")
+        elif mode == "custom":
+            if self._send_shortcut(self.dictation_shortcut):
+                print(f"dictation: sent {self.dictation_shortcut}")
+        else:
+            self._apple_toggle()
+
+    def _apple_toggle(self):
+        """Apple Dictation: start from Edit > Start Dictation, stop with Esc."""
+        if self._apple_dictating:
+            self._apple_dictating = False
+            self._send_shortcut("escape")
+            print("dictation: stopped Apple Dictation (esc)")
             return
         try:
             import ApplicationServices as AS
@@ -902,6 +969,7 @@ class Dispatcher:
                     if (any(w in title for w in self.DICTATION_WORDS)
                             and attr(item, AS.kAXEnabledAttribute)):
                         AS.AXUIElementPerformAction(item, AS.kAXPressAction)
+                        self._apple_dictating = True
                         print(f"dictation: pressed '{title}' in {name}")
                         return
         print(f"dictation: no Dictation menu item in {name} "

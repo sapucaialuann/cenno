@@ -28,7 +28,11 @@ SUPPORT_DIR = os.path.expanduser(f"~/Library/Application Support/{APP_NAME}")
 LOG_PATH = os.path.expanduser(f"~/Library/Logs/{APP_NAME}.log")
 SETTINGS_PATH = os.path.join(SUPPORT_DIR, "settings.json")
 DEFAULT_SETTINGS = {"enabled": True, "preview": True, "mouse": True,
-                    "preview_corner": "top_right"}
+                    "preview_corner": "top_right",
+                    "dictation": "auto", "dictation_shortcut": ""}
+DICTATION_MODES = (("auto", "Automatic (Wispr Flow if running, else Apple)"),
+                   ("wispr", "Wispr Flow"), ("apple", "Apple Dictation"),
+                   ("custom", "Other app (custom shortcut)..."))
 PREVIEW_W, PREVIEW_H = 280, 210        # floating corner preview (points)
 PREVIEW_MARGIN = 12
 CORNERS = (("top_right", "Top right (default)"), ("top_left", "Top left"),
@@ -381,6 +385,13 @@ class NewMotionApp(rumps.App):
             self.preview_menu.add(item)
             self.corner_items[key] = item
         self.mouse_item = rumps.MenuItem("Mouse control (point + pinch)", callback=self.toggle_mouse)
+        self.dictation_menu = rumps.MenuItem("Dictation (hang loose)")
+        self.dictation_items = {}
+        for key, label in DICTATION_MODES:
+            item = rumps.MenuItem(label, callback=self.set_dictation)
+            item.mode_key = key
+            self.dictation_menu.add(item)
+            self.dictation_items[key] = item
         self.ax_item = rumps.MenuItem("Allow Accessibility...", callback=self.fix_accessibility)
         self.login_item = rumps.MenuItem("Open at login", callback=self.toggle_login)
         gestures = rumps.MenuItem("Gestures")
@@ -395,7 +406,7 @@ class NewMotionApp(rumps.App):
                                  callback=lambda _: os.system(f"open -a Console '{LOG_PATH}'")))
         self.menu = [self.status_item, self.ax_item, None, self.enabled_item,
                      self.pause_item, self.preview_menu,
-                     self.mouse_item, None, gestures, perms,
+                     self.mouse_item, self.dictation_menu, None, gestures, perms,
                      self.login_item, None,
                      rumps.MenuItem(f"About {APP_NAME} {VERSION}"),
                      rumps.MenuItem("Quit newMotion", callback=self.quit_app, key="q")]
@@ -414,6 +425,14 @@ class NewMotionApp(rumps.App):
         self.pause_item.state = int(self.tracker.engine.paused)
         self.preview_item.state = int(self.settings["preview"])
         self.enabled_item.state = int(self.settings["enabled"])
+        for key, item in self.dictation_items.items():
+            item.state = int(self.settings["dictation"] == key)
+        sc = self.settings.get("dictation_shortcut") or ""
+        self.dictation_items["custom"].title = (
+            f"Other app: {sc}  (change...)" if sc else "Other app (custom shortcut)...")
+        d = self.tracker.dispatcher
+        d.dictation_mode = self.settings["dictation"]
+        d.dictation_shortcut = sc
         for key, item in self.corner_items.items():
             item.state = int(self.settings["preview_corner"] == key)
         self.mouse_item.state = int(self.settings["mouse"])
@@ -563,6 +582,25 @@ class NewMotionApp(rumps.App):
         save_settings(self.settings)
         if self.preview:
             self.preview.set_corner(sender.corner_key)
+        self._sync_checks()
+
+    def set_dictation(self, sender):
+        mode = sender.mode_key
+        if mode == "custom":
+            w = rumps.Window(
+                title="Dictation shortcut",
+                message=("Type the shortcut your dictation app uses to start and stop "
+                         "(toggle / hands-free mode), for example:\n"
+                         "  ctrl+option+d    cmd+shift+space    fn+space    f5\n\n"
+                         "Modifiers: cmd, ctrl, option, shift, fn."),
+                default_text=self.settings.get("dictation_shortcut") or "",
+                ok="Save", cancel="Cancel", dimensions=(260, 24))
+            r = w.run()
+            if not r.clicked or not r.text.strip():
+                return
+            self.settings["dictation_shortcut"] = r.text.strip().lower()
+        self.settings["dictation"] = mode
+        save_settings(self.settings)
         self._sync_checks()
 
     def toggle_mouse(self, _):
