@@ -24,7 +24,7 @@ newMotion lives in the menu bar (hand icon): on/off (turns the camera off withou
 | Pinch while pointing | Click; twice = double-click; hold = drag |
 | OK sign + twist | Volume |
 | Thumbs up (hold) | Play / pause |
-| Hang loose (hold) | Dictation on / off |
+| Hang loose (hold) | Dictation on / off (Wispr Flow if running, else macOS Dictation) |
 | Open hand then gather fingertips | Spotlight |
 | Fist (hold 1.5 s) | Pause / resume gestures |
 

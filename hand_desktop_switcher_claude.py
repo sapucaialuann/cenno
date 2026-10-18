@@ -105,6 +105,7 @@ THUMB_UP_MARGIN = 0.15        # thumb tip must be this far above everything
 POSE_STABLE_FRAMES = 3        # frames a pose must persist before it counts
 SHAKA_MIN_SPAN = 0.95         # hang loose: thumb tip to pinky tip, palms
 SHAKA_HOLD_SECONDS = 0.4      # hold hang loose this long to toggle dictation
+WISPR_BUNDLE_ID = "com.electron.wispr-flow"   # used for dictation when running
 
 # --- Motion units ---
 # Motion is measured in palms, but a hand close to the camera has a huge
@@ -833,10 +834,37 @@ class Dispatcher:
     # Menu titles that mean Start / Stop Dictation (en, de, pt, es, fr).
     DICTATION_WORDS = ("dictation", "diktat", "ditado", "dictado", "dict\u00e9e")
 
+    def _wispr_running(self):
+        apps = self.appkit.NSWorkspace.sharedWorkspace().runningApplications()
+        return any((a.bundleIdentifier() or "") == WISPR_BUNDLE_ID for a in apps)
+
+    def _wispr_toggle(self):
+        """Wispr Flow hands-free mode: Fn+Space starts, Fn+Space again stops."""
+        Q = self.quartz
+        fn = Q.kCGEventFlagMaskSecondaryFn
+        src = Q.CGEventSourceCreate(Q.kCGEventSourceStateHIDSystemState)
+
+        def post(code, down, flags, kind=None):
+            e = Q.CGEventCreateKeyboardEvent(src, code, down)
+            if kind is not None:
+                Q.CGEventSetType(e, kind)
+            Q.CGEventSetFlags(e, flags)
+            Q.CGEventPost(Q.kCGHIDEventTap, e)
+            time.sleep(0.04)
+
+        post(63, True, fn, Q.kCGEventFlagsChanged)      # Fn down
+        post(49, True, fn)                              # Space down
+        post(49, False, fn)                             # Space up
+        post(63, False, 0, Q.kCGEventFlagsChanged)      # Fn up
+
     def _toggle_dictation(self):
-        """Press Edit > Start / Stop Dictation in the frontmost app through the
-        Accessibility API.  Works whatever the Dictation keyboard shortcut is."""
+        """Wispr Flow if it is running (same gesture starts and stops it),
+        otherwise press Edit > Start Dictation in the frontmost app."""
         if self.appkit is None:
+            return
+        if self.quartz is not None and self._wispr_running():
+            self._wispr_toggle()
+            print("dictation: toggled Wispr Flow (Fn+Space)")
             return
         try:
             import ApplicationServices as AS
