@@ -31,7 +31,7 @@ frame, so they work whether you sit close to the camera or across the room):
   OPEN HAND -> GATHER all fingertips together ("ma che vuoi")
                            -> Spotlight                    (Cmd+Space)
 
-  FIST (hold ~1.5 s)       -> pause / resume all gestures (safety switch)
+  ROCK HORNS (hold ~1 s)   -> pause / resume all gestures (fist = rest, does nothing)
 
 Design notes
   * Finger states are rotation-invariant (distance from the wrist), so poses
@@ -204,7 +204,8 @@ VOLUME_DIRECTION = 1           # flip to -1 if clockwise feels backwards
 THUMBS_UP_HOLD_SECONDS = 0.5
 THUMBS_DOWN_HOLD_SECONDS = 0.5  # thumbs down: undo (deletes dictated text)
 GATHER_FROM_OPEN_WINDOW = 0.6  # gather must follow an open hand within this
-FIST_PAUSE_HOLD_SECONDS = 1.5  # set to 0 to disable the pause gesture
+PAUSE_HOLD_SECONDS = 1.0       # rock horns held this long pauses / resumes (0 = off)
+HORNS_THUMB_MAX_SPAN = 0.85    # thumb tip to pinky tip below this = thumb tucked
 
 # --- HUD ---
 ACTION_FLASH_SECONDS = 1.0
@@ -258,6 +259,7 @@ def finger_ratio(pts, finger):
 
 def classify_pose(pts, palm):
     """Return (pose, features).  Poses: ok, gather, point, thumbs_up, fist,
+    horns,
     shaka (hang loose), two, open, other."""
     ratios = {f: finger_ratio(pts, f) for f in FINGERS}
     ext = {f: r >= EXTENDED_RATIO for f, r in ratios.items()}
@@ -282,6 +284,10 @@ def classify_pose(pts, palm):
             and dist(pts[4], pts[20]) / palm >= SHAKA_MIN_SPAN):
         # Hang loose: thumb and pinky out, the three middle fingers curled.
         return "shaka", feats
+    if (ext["index"] and ext["pinky"] and curl["middle"] and curl["ring"]
+            and dist(pts[4], pts[20]) / palm < HORNS_THUMB_MAX_SPAN):
+        # Rock horns: index and pinky up, middle and ring curled, thumb tucked.
+        return "horns", feats
     if all(curl.values()):
         thumb_len = dist(pts[4], pts[2]) / palm
         highest_other = min(p[1] for i, p in enumerate(pts) if i not in (3, 4))
@@ -466,8 +472,8 @@ class GestureEngine:
         # Hold gestures.
         held = now - self.pose_since
         if not self.latched:
-            if (self.pose == "fist" and FIST_PAUSE_HOLD_SECONDS > 0
-                    and held >= FIST_PAUSE_HOLD_SECONDS):
+            if (self.pose == "horns" and PAUSE_HOLD_SECONDS > 0
+                    and held >= PAUSE_HOLD_SECONDS):
                 self.paused = not self.paused
                 ev.append(("pause_on" if self.paused else "pause_off", 1))
                 self.latched = True
@@ -1157,7 +1163,7 @@ HELP_LINES = (
     "hang loose (hold)       dictation on / off",
     "thumbs down (hold)      undo (delete dictated text)",
     "open -> gather tips     Spotlight",
-    "fist (hold)             pause gestures",
+    "rock horns (hold)       pause / resume gestures",
     "key t: test Space switch (no gesture)",
 )
 

@@ -34,7 +34,7 @@ Voice Control > Commands > +): phrase "newMotion on", action **Open URL**,
 | Thumbs down (hold) | Undo (deletes the last dictated text) |
 | Hang loose (hold) | Dictation on / off (Wispr Flow if running, else macOS Dictation) |
 | Open hand then gather fingertips | Spotlight |
-| Fist (hold 1.5 s) | Pause / resume gestures |
+| Rock horns (hold 1 s) | Pause / resume gestures (a fist does nothing, so you can rest your hand) |
 
 ## Files
 
