@@ -1,6 +1,6 @@
 # newMotion
 
-Control your Mac with hand gestures through the webcam. Runs fully on your Mac (MediaPipe + OpenCV); video never leaves the machine.
+Control your Mac with hand gestures through the webcam. Runs on your Mac. Nothing leaves it.
 
 ## Install (macOS, Apple Silicon)
 
@@ -39,6 +39,7 @@ Voice Control > Commands > +): phrase "newMotion on", action **Open URL**,
 ## Files
 
 - `newmotion_app.py`: the menu bar app.
+- `theme.py`: design tokens (colour, type, space, radius, motion) for Day and Night. The only place these values live.
 - `hand_desktop_switcher_claude.py`: gesture engine (also runs standalone with a preview window).
 - `hand_desktop_switcher.py`: simpler baseline version.
 - `build_mac.sh`, `newMotion.spec`, `requirements-build.txt`: build the app and DMG (`./build_mac.sh`).
@@ -50,4 +51,4 @@ Voice Control > Commands > +): phrase "newMotion on", action **Open URL**,
 
 ## Support
 
-newMotion is free. If you enjoy it, you can support it at [ko-fi.com/sapucaialuann](https://ko-fi.com/sapucaialuann) (also in the menu bar: Support newMotion).
+newMotion is free. If it helps you, you can support it on [Ko-fi](https://ko-fi.com/sapucaialuann). You can also find it in the menu bar under Support newMotion on Ko-fi.

@@ -7,7 +7,7 @@ datas, binaries, hiddenimports = [], [], []
 d, b, h = collect_all("mediapipe")
 datas += d; binaries += b; hiddenimports += h
 hiddenimports += [
-    "hand_desktop_switcher_claude", "rumps",
+    "hand_desktop_switcher_claude", "theme", "rumps",
     "Quartz", "AppKit", "Foundation", "ApplicationServices",
     "AVFoundation", "ServiceManagement",
 ]
@@ -42,7 +42,7 @@ app = BUNDLE(
         "NSHighResolutionCapable": True,
         "NSCameraUsageDescription":
             "newMotion uses the camera to see your hand gestures. "
-            "Video is processed on your Mac and never leaves it.",
+            "Runs on your Mac. Nothing leaves it.",
         "CFBundleURLTypes": [{"CFBundleURLName": "newMotion commands",
                               "CFBundleURLSchemes": ["newmotion"]}],
         "NSAppleEventsUsageDescription":
