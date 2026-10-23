@@ -2,7 +2,7 @@
 
 Formerly newMotion. Website: [cennoapp.com](https://cennoapp.com)
 
-Control your Mac with hand gestures through the webcam. Runs fully on your Mac (MediaPipe + OpenCV); video never leaves the machine.
+Control your Mac with hand gestures through the webcam. Runs on your Mac. Nothing leaves it.
 
 ## Install (macOS, Apple Silicon)
 
@@ -36,11 +36,13 @@ Voice Control > Commands > +): phrase "Cenno on", action **Open URL**,
 | Thumbs down (hold) | Undo (deletes the last dictated text) |
 | Hang loose (hold) | Dictation on / off (pick the tool in menu bar > Dictation: Wispr Flow, Apple Dictation, or any app via its shortcut) |
 | Open hand then gather fingertips | Spotlight |
+| Wave, open hand side to side | Lock screen |
 | Rock horns (hold 1 s) | Pause / resume gestures (a fist does nothing, so you can rest your hand) |
 
 ## Files
 
 - `cenno_app.py`: the menu bar app.
+- `theme.py`: design tokens (colour, type, space, radius, motion) for Day and Night. The only place these values live.
 - `hand_desktop_switcher.py`: gesture engine (also runs standalone with a preview window).
 - `build_mac.sh`, `Cenno.spec`, `requirements-build.txt`: build the app and DMG (`./build_mac.sh`).
 
@@ -51,4 +53,4 @@ Voice Control > Commands > +): phrase "Cenno on", action **Open URL**,
 
 ## Support
 
-Cenno is free. If you enjoy it, you can support it at [ko-fi.com/sapucaialuann](https://ko-fi.com/sapucaialuann) (also in the menu bar: Support Cenno).
+Cenno is free. If it helps you, you can support it on [Ko-fi](https://ko-fi.com/sapucaialuann). You can also find it in the menu bar under Support Cenno on Ko-fi.

@@ -21,6 +21,7 @@ import traceback
 import rumps
 
 import hand_desktop_switcher as core
+import theme
 
 APP_NAME = "Cenno"
 VERSION = "0.1.0"
@@ -43,7 +44,30 @@ DICTATION_MODES = (("auto", "Automatic (Wispr Flow if running, else Apple)"),
                    ("wispr", "Wispr Flow"), ("apple", "Apple Dictation"),
                    ("custom", "Other app (custom shortcut)..."))
 PREVIEW_W, PREVIEW_H = 280, 210        # floating corner preview (points)
-PREVIEW_MARGIN = 12
+PREVIEW_MARGIN = theme.SPACE[3]
+PRIVACY_LINE = "Runs on your Mac. Nothing leaves it."
+SUPPORT_LINE = "Cenno is free. If it helps you, you can support it on Ko-fi."
+
+
+def gesture_lines():
+    """Menu list in the 'Gesture · Action' pattern (swipe direction follows
+    the engine's natural-swipe setting)."""
+    prev_dir, next_dir = ("right", "left") if core.NATURAL_SWIPE else ("left", "right")
+    return (f"Swipe {prev_dir} · Previous Space",
+            f"Swipe {next_dir} · Next Space",
+            "Swipe up · Mission Control",
+            "Swipe down · App windows, then close",
+            "Two fingers move or flick · Scroll",
+            "Two fingers swipe · Back or forward",
+            "Point · Move cursor",
+            "Pinch while pointing · Click, twice to double click, hold to drag",
+            "OK sign and twist · Volume",
+            "Thumbs up, hold · Play or pause",
+            "Thumbs down, hold · Undo dictated text",
+            "Hang loose, hold · Dictation on or off",
+            "Open hand, gather fingertips · Spotlight",
+            "Wave, open hand side to side · Lock screen",
+            "Rock horns, hold · Pause or resume gestures")
 CORNERS = (("top_right", "Top right (default)"), ("top_left", "Top left"),
            ("bottom_right", "Bottom right"), ("bottom_left", "Bottom left"))
 
@@ -143,10 +167,12 @@ class Tracker(threading.Thread):
         self.stop_flag = threading.Event()
         self.lock = threading.Lock()
         self.preview_frame = None
-        self.status = "Starting camera..."
+        self.status = "Starting camera"
         self.last_action, self.last_action_time = "", -1e9
         self.fps = 0.0
         self.camera_requested = False
+        self.dark = False                  # set from the main thread (tick_ui)
+        self.reduce_motion = False
 
     # --- helpers ---
     def set_paused(self, paused):
@@ -158,7 +184,7 @@ class Tracker(threading.Thread):
             self._loop()
         except Exception:
             print("FATAL in camera thread:\n" + traceback.format_exc())
-            self.status = "Error: see log"
+            self.status = "Error · open the log file"
 
     def _open_camera(self, cv2):
         cap = cv2.VideoCapture(core.CAMERA_INDEX)
@@ -251,8 +277,12 @@ class Tracker(threading.Thread):
                     print(f"-> {label}")
 
                 pose = self.engine.pose
-                state = "Paused" if self.engine.paused else "Active"
-                self.status = f"{state}: {pose if pose != 'none' else 'no hand'}"
+                if self.engine.paused:
+                    self.status = "Paused"
+                elif pose == "none":
+                    self.status = "No hand"
+                else:
+                    self.status = f"Tracking · {pose}"
 
                 frames += 1
                 if now - fps_t0 >= 1.0:
@@ -268,32 +298,71 @@ class Tracker(threading.Thread):
             hands.close()
 
     def _make_preview(self, cv2, drawing, mp_hands, frame, hl, now):
-        """Small preview with a compact HUD, encoded as JPEG for the panel."""
+        """Small preview with status pills, encoded as JPEG for the panel."""
+        dark = self.dark
+        col = lambda name: theme.bgr(name, dark)
         h, w = frame.shape[:2]
         if hl is not None:
-            drawing.draw_landmarks(frame, hl, mp_hands.HAND_CONNECTIONS)
+            drawing.draw_landmarks(
+                frame, hl, mp_hands.HAND_CONNECTIONS,
+                drawing.DrawingSpec(color=col("trace"), thickness=2, circle_radius=2),
+                drawing.DrawingSpec(color=col("ink"), thickness=1))
             if self.engine.pose == "point" and self.settings["mouse"]:
                 x0, y0, x1, y1 = core.POINTER_BOX
+                box = col("ember") if self.engine.pinched else col("trace")
                 cv2.rectangle(frame, (int(x0 * w), int(y0 * h)),
-                              (int(x1 * w), int(y1 * h)), (0, 255, 255), 2)
+                              (int(x1 * w), int(y1 * h)), box, 2)
         # Render at 2x the panel size so it stays sharp on Retina screens.
         small = cv2.resize(frame, (PREVIEW_W * 2, PREVIEW_H * 2), interpolation=cv2.INTER_AREA)
         sh, sw = small.shape[:2]
         font = cv2.FONT_HERSHEY_SIMPLEX
+        s2 = 2                                   # token px -> render px
 
-        def text(s, x, y, scale, color, thick):
-            cv2.putText(small, s, (x + 2, y + 2), font, scale, (0, 0, 0), thick, cv2.LINE_AA)
-            cv2.putText(small, s, (x, y), font, scale, color, thick, cv2.LINE_AA)
+        def pill(x, y, label, fill, ink, outline=None):
+            """Label-style pill (uppercase, radius-pill). Returns its width."""
+            scale, thick = 0.62, 2
+            (tw, th), _ = cv2.getTextSize(label, font, scale, thick)
+            px, py = theme.SPACE[3] * s2, theme.SPACE[1] * s2
+            wd, ht = tw + 2 * px, th + 2 * py
 
-        paused = self.engine.paused
-        pose = self.engine.pose if self.engine.pose != "none" else "no hand"
-        text("PAUSED" if paused else pose, 16, 38, 0.9,
-             (80, 80, 255) if paused else (255, 255, 255), 2)
-        if now - self.last_action_time < core.ACTION_FLASH_SECONDS:
-            (tw, _), _ = cv2.getTextSize(self.last_action, font, 1.1, 3)
-            text(self.last_action, max(10, (sw - tw) // 2), sh - 24, 1.1, (90, 255, 90), 3)
-        if paused:
-            cv2.rectangle(small, (0, 0), (sw - 1, sh - 1), (80, 80, 255), 6)
+            def shape(c, inset=0):
+                r = ht // 2 - inset
+                x0, x1, cy = x + inset + r, x + wd - inset - r, y + ht // 2
+                cv2.circle(small, (x0, cy), r, c, -1, cv2.LINE_AA)
+                cv2.circle(small, (x1, cy), r, c, -1, cv2.LINE_AA)
+                cv2.rectangle(small, (x0, cy - r), (x1, cy + r), c, -1)
+
+            if outline is not None:
+                shape(outline)
+                shape(fill, inset=2)
+            else:
+                shape(fill)
+            cv2.putText(small, label, (x + px, y + py + th), font, scale, ink, thick,
+                        cv2.LINE_AA)
+            return wd
+
+        gap = theme.SPACE[2] * s2
+        x0 = y0 = theme.SPACE[3] * s2
+        pose = self.engine.pose
+        if self.engine.paused:
+            pill(x0, y0, "PAUSED", col("paper-raised"), col("ink"), col("line-strong"))
+        elif pose == "none":
+            pill(x0, y0, "NO HAND", col("paper-raised"), col("ember-ink"), col("line-strong"))
+        else:
+            wd = pill(x0, y0, "TRACKING", col("trace"), col("on-trace"))
+            pill(x0 + wd + gap, y0, pose.upper(), col("paper-raised"), col("ink"),
+                 col("line-strong"))
+
+        age = now - self.last_action_time
+        if age < core.ACTION_FLASH_SECONDS:
+            label = self.last_action.upper()
+            (tw, th), _ = cv2.getTextSize(label, font, 0.62, 2)
+            wd = tw + 2 * theme.SPACE[3] * s2
+            ht = th + 2 * theme.SPACE[1] * s2
+            flash = age < theme.FLASH_S and not self.reduce_motion
+            pill((sw - wd) // 2, sh - theme.SPACE[3] * s2 - ht, label,
+                 col("trace-soft") if flash else col("paper-raised"),
+                 col("ink"), col("line-strong"))     # ink, not on-trace: Night trace-soft is dark
         ok, jpg = cv2.imencode(".jpg", small, [cv2.IMWRITE_JPEG_QUALITY, 80])
         return jpg.tobytes() if ok else None
 
@@ -302,7 +371,7 @@ class MiniPreview:
     """Borderless floating panel in a screen corner: above all apps, on
     every Space (also over full-screen apps), and clicks pass through it."""
 
-    def __init__(self, corner="top_right"):
+    def __init__(self, corner="top_right", dark=False):
         import AppKit
         self.AK = AppKit
         self.corner = corner
@@ -321,17 +390,22 @@ class MiniPreview:
         panel.setIgnoresMouseEvents_(True)
         panel.setHidesOnDeactivate_(False)
         panel.setFloatingPanel_(True)
-        panel.setAlphaValue_(0.94)
         view = AppKit.NSImageView.alloc().initWithFrame_(((0, 0), (PREVIEW_W, PREVIEW_H)))
         view.setImageScaling_(AppKit.NSImageScaleAxesIndependently)
         view.setWantsLayer_(True)
-        view.layer().setCornerRadius_(14)
+        view.layer().setCornerRadius_(theme.RADIUS_MD)
         view.layer().setMasksToBounds_(True)
-        view.layer().setBackgroundColor_(AppKit.NSColor.blackColor().CGColor())
+        view.layer().setBorderWidth_(1)
         panel.setContentView_(view)
         self.panel, self.view = panel, view
         self.visible = False
+        self.apply_theme(dark)
         self.place()
+
+    def apply_theme(self, dark):
+        layer = self.view.layer()
+        layer.setBackgroundColor_(theme.ns_color("paper-sunk", dark).CGColor())
+        layer.setBorderColor_(theme.ns_color("line", dark).CGColor())
 
     def place(self):
         """Chosen corner of the main screen (top corners sit under the menu
@@ -373,7 +447,7 @@ class MiniPreview:
 
 class CennoApp(rumps.App):
     def __init__(self):
-        super().__init__(APP_NAME, title="✋", quit_button=None)
+        super().__init__(APP_NAME, title=APP_NAME, quit_button=None)
         self.settings = load_settings()
         self.tracker = Tracker(self.settings)
         self.preview = None
@@ -404,7 +478,7 @@ class CennoApp(rumps.App):
         self.ax_item = rumps.MenuItem("Allow Accessibility...", callback=self.fix_accessibility)
         self.login_item = rumps.MenuItem("Open at login", callback=self.toggle_login)
         gestures = rumps.MenuItem("Gestures")
-        for line in core.HELP_LINES:
+        for line in gesture_lines():
             gestures.add(rumps.MenuItem(line))
         perms = rumps.MenuItem("Permissions")
         perms.add(rumps.MenuItem("Open Camera settings",
@@ -417,9 +491,9 @@ class CennoApp(rumps.App):
                      self.pause_item, self.preview_menu,
                      self.mouse_item, self.dictation_menu, None, gestures, perms,
                      self.login_item, None,
-                     rumps.MenuItem("Support Cenno ☕",
+                     rumps.MenuItem("Support Cenno on Ko-fi",
                                     callback=lambda _: os.system(f"open '{SUPPORT_URL}'")),
-                     rumps.MenuItem(f"About {APP_NAME} {VERSION}"),
+                     rumps.MenuItem(f"About {APP_NAME} {VERSION}", callback=self.show_about),
                      rumps.MenuItem("Quit Cenno", callback=self.quit_app, key="q")]
         self._sync_checks()
 
@@ -430,6 +504,7 @@ class CennoApp(rumps.App):
         self.preview_timer = rumps.Timer(self.tick_preview, 1 / 30)
         self.preview_timer.start()
         self.perm_checked = False
+        self.dark = None
 
     # --- menu state ---
     def _sync_checks(self):
@@ -468,6 +543,12 @@ class CennoApp(rumps.App):
 
     # --- timers (main thread) ---
     def tick_ui(self, _):
+        dark = theme.system_is_dark()
+        self.tracker.reduce_motion = theme.reduce_motion()
+        if dark != self.dark:
+            self.dark = self.tracker.dark = dark
+            if self.preview:
+                self.preview.apply_theme(dark)
         if self.ax_ok is None:
             # First tick: ask macOS (shows its own prompt if it can) and,
             # if still not allowed, explain and offer to open the settings.
@@ -495,7 +576,7 @@ class CennoApp(rumps.App):
     def tick_preview(self, _):
         if self.preview is None:
             try:
-                self.preview = MiniPreview(self.settings["preview_corner"])
+                self.preview = MiniPreview(self.settings["preview_corner"], bool(self.dark))
             except Exception:
                 print("WARN: preview unavailable:\n" + traceback.format_exc())
                 self.settings["preview"] = False
@@ -519,6 +600,13 @@ class CennoApp(rumps.App):
             rumps.notification(APP_NAME, title, msg)
         except Exception as exc:
             print(f"WARN: notification failed: {exc}")
+
+    def show_about(self, _):
+        choice = rumps.alert(title=f"{APP_NAME} {VERSION}",
+                             message=f"{PRIVACY_LINE}\n\n{SUPPORT_LINE}",
+                             ok="Support on Ko-fi", cancel="Close")
+        if choice == 1:
+            os.system(f"open '{SUPPORT_URL}'")
 
     def fix_accessibility(self, _):
         if accessibility_trusted():
