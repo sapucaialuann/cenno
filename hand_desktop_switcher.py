@@ -843,7 +843,8 @@ KEY_BINDINGS = {
         "overview": ("win", "tab"), "app_windows": ("win", "d"),
         "close_overview": ("escape",),
         "back": ("alt", "left"), "forward": ("alt", "right"),
-        "launcher": ("win",), "lock": ("win", "l"),
+        "launcher": ("win",), "undo": ("ctrl", "z"),
+        "lock": ("win", "l"),
     },
     "Linux": {
         "space_left": ("ctrl", "alt", "left"), "space_right": ("ctrl", "alt", "right"),
@@ -995,6 +996,9 @@ class Dispatcher:
 
     def _toggle_dictation(self):
         """Start or stop dictation with whichever tool the user picked."""
+        if OS_NAME == "Windows":
+            self._toggle_dictation_windows()
+            return
         if self.appkit is None or self.quartz is None:
             return
         mode = self.dictation_mode
@@ -1043,6 +1047,56 @@ class Dispatcher:
                         return
         print(f"dictation: no Dictation menu item in {name} "
               "(is Dictation on in System Settings > Keyboard?)")
+
+    # --- Windows dictation -----------------------------------------------
+    # macOS uses synthetic key events (_send_shortcut) because event taps
+    # ignore synthetic flags; on Windows pyautogui's hotkey is enough.
+    wispr_shortcut = ""
+
+    def _wispr_running_windows(self):
+        try:
+            import subprocess
+            out = subprocess.run(
+                ["tasklist", "/FO", "CSV", "/NH"],
+                capture_output=True, text=True, timeout=3,
+            ).stdout.lower()
+            return "wispr" in out
+        except Exception:
+            return False
+
+    def _toggle_dictation_windows(self):
+        mode = getattr(self, "dictation_mode", "auto")
+        if mode == "auto":
+            mode = "wispr" if self._wispr_running_windows() else "winvoice"
+
+        if mode == "wispr":
+            sc = getattr(self, "wispr_shortcut", "")
+            if sc:
+                keys = [p.strip() for p in sc.replace("+", " ").split() if p.strip()]
+                try:
+                    self.pag.hotkey(*keys)
+                    print(f"dictation: toggled Wispr Flow ({sc})")
+                except Exception as exc:
+                    print(f"WARN: Wispr Flow shortcut {sc!r} failed: {exc}")
+            else:
+                print("WARN: Wispr Flow mode active but no shortcut configured "
+                      "(set it via menu > Dictation > Wispr Flow)")
+            return
+
+        if mode == "custom":
+            sc = getattr(self, "dictation_shortcut", "")
+            if sc:
+                keys = [p.strip() for p in sc.replace("+", " ").split() if p.strip()]
+                try:
+                    self.pag.hotkey(*keys)
+                    print(f"dictation: sent {sc}")
+                except Exception as exc:
+                    print(f"WARN: dictation shortcut {sc!r} failed: {exc}")
+            return
+
+        # winvoice / fallback: Windows Voice Typing (Win+H)
+        self.pag.hotkey("win", "h")
+        print("dictation: toggled Windows Voice Typing (win+h)")
 
     def _mac_media_key(self, code):
         A, Q = self.appkit, self.quartz
