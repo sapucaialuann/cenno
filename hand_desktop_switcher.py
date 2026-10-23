@@ -58,7 +58,7 @@ Dependencies:
     (pyautogui pulls in pyobjc / Quartz on macOS)
 
 Run:
-    python3 hand_desktop_switcher_claude.py
+    python3 hand_desktop_switcher.py
     keys in the preview window:  q quit,  p pause,  h help overlay
 """
 
