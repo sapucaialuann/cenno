@@ -41,7 +41,7 @@ Voice Control > Commands > +): phrase "Cenno on", action **Open URL**,
 ## Files
 
 - `cenno_app.py`: the menu bar app.
-- `hand_desktop_switcher_claude.py`: gesture engine (also runs standalone with a preview window).
+- `hand_desktop_switcher.py`: gesture engine (also runs standalone with a preview window).
 - `build_mac.sh`, `Cenno.spec`, `requirements-build.txt`: build the app and DMG (`./build_mac.sh`).
 
 ## Run from source

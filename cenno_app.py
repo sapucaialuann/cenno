@@ -1,7 +1,7 @@
 """
 Cenno: menu bar app for macOS.
 
-Wraps the gesture engine from hand_desktop_switcher_claude.py in a normal Mac
+Wraps the gesture engine from hand_desktop_switcher.py in a normal Mac
 app: a menu bar icon, no Terminal, optional camera preview, pause, mouse
 control on/off, launch at login and permission helpers.
 
@@ -20,7 +20,7 @@ import traceback
 
 import rumps
 
-import hand_desktop_switcher_claude as core
+import hand_desktop_switcher as core
 
 APP_NAME = "Cenno"
 VERSION = "0.1.0"

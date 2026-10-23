@@ -1,5 +1,5 @@
 """
-Cenno: hand-gesture control for macOS (Claude's version).
+Cenno: hand-gesture control for macOS.
 
 Gestures (all measured in "palms", i.e. relative to your hand size in the
 frame, so they work whether you sit close to the camera or across the room):
