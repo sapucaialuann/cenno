@@ -1,8 +1,8 @@
 #!/bin/bash
-# Builds dist/newMotion.app and dist/newMotion-<version>.dmg on an Apple Silicon Mac.
+# Builds dist/Cenno.app and dist/Cenno-<version>.dmg on an Apple Silicon Mac.
 set -euo pipefail
 cd "$(dirname "$0")"
-VERSION=$(grep -E '^VERSION = ' newMotion.spec | cut -d'"' -f2)
+VERSION=$(grep -E '^VERSION = ' Cenno.spec | cut -d'"' -f2)
 VENV=.venv-build
 
 if [ ! -x "$VENV/bin/python" ]; then
@@ -18,18 +18,18 @@ for s in 16 32 128 256 512; do
   d=$((s * 2))
   sips -z $d $d assets/icon_1024.png --out build/icon.iconset/icon_${s}x${s}@2x.png >/dev/null
 done
-iconutil -c icns build/icon.iconset -o build/newMotion.icns
+iconutil -c icns build/icon.iconset -o build/Cenno.icns
 
 echo "== app"
-"$VENV/bin/pyinstaller" --noconfirm --clean --log-level WARN newMotion.spec
-codesign --force --deep --sign - dist/newMotion.app
-codesign --verify --deep dist/newMotion.app && echo "signature ok (ad-hoc)"
+"$VENV/bin/pyinstaller" --noconfirm --clean --log-level WARN Cenno.spec
+codesign --force --deep --sign - dist/Cenno.app
+codesign --verify --deep dist/Cenno.app && echo "signature ok (ad-hoc)"
 
 echo "== dmg"
 rm -rf build/dmg && mkdir -p build/dmg
-cp -R dist/newMotion.app build/dmg/
+cp -R dist/Cenno.app build/dmg/
 ln -s /Applications build/dmg/Applications
-rm -f "dist/newMotion-$VERSION.dmg"
-hdiutil create -quiet -volname "newMotion" -srcfolder build/dmg -ov -format UDZO "dist/newMotion-$VERSION.dmg"
-du -sh dist/newMotion.app "dist/newMotion-$VERSION.dmg"
+rm -f "dist/Cenno-$VERSION.dmg"
+hdiutil create -quiet -volname "Cenno" -srcfolder build/dmg -ov -format UDZO "dist/Cenno-$VERSION.dmg"
+du -sh dist/Cenno.app "dist/Cenno-$VERSION.dmg"
 echo BUILD_OK

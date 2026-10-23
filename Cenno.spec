@@ -1,4 +1,4 @@
-# PyInstaller spec for newMotion.app (build with ./build_mac.sh)
+# PyInstaller spec for Cenno.app (build with ./build_mac.sh)
 from PyInstaller.utils.hooks import collect_all
 
 VERSION = "0.1.0"
@@ -13,7 +13,7 @@ hiddenimports += [
 ]
 
 a = Analysis(
-    ["newmotion_app.py"],
+    ["cenno_app.py"],
     pathex=["."],
     binaries=binaries,
     datas=datas,
@@ -22,30 +22,30 @@ a = Analysis(
     noarchive=False,
 )
 pyz = PYZ(a.pure)
-exe = EXE(pyz, a.scripts, [], exclude_binaries=True, name="newMotion",
+exe = EXE(pyz, a.scripts, [], exclude_binaries=True, name="Cenno",
           console=False, argv_emulation=False, target_arch="arm64",
           codesign_identity=None)
-coll = COLLECT(exe, a.binaries, a.datas, name="newMotion")
+coll = COLLECT(exe, a.binaries, a.datas, name="Cenno")
 app = BUNDLE(
     coll,
-    name="newMotion.app",
-    icon="build/newMotion.icns",
-    bundle_identifier="com.luannsapucaia.newmotion",
+    name="Cenno.app",
+    icon="build/Cenno.icns",
+    bundle_identifier="com.luannsapucaia.cenno",
     version=VERSION,
     info_plist={
-        "CFBundleName": "newMotion",
-        "CFBundleDisplayName": "newMotion",
+        "CFBundleName": "Cenno",
+        "CFBundleDisplayName": "Cenno",
         "CFBundleShortVersionString": VERSION,
         "CFBundleVersion": VERSION,
         "LSUIElement": True,                     # menu bar only, no Dock icon
         "LSMinimumSystemVersion": "12.0",
         "NSHighResolutionCapable": True,
         "NSCameraUsageDescription":
-            "newMotion uses the camera to see your hand gestures. "
+            "Cenno uses the camera to see your hand gestures. "
             "Video is processed on your Mac and never leaves it.",
-        "CFBundleURLTypes": [{"CFBundleURLName": "newMotion commands",
-                              "CFBundleURLSchemes": ["newmotion"]}],
+        "CFBundleURLTypes": [{"CFBundleURLName": "Cenno commands",
+                              "CFBundleURLSchemes": ["cenno", "newmotion"]}],
         "NSAppleEventsUsageDescription":
-            "newMotion sends keyboard shortcuts to switch Spaces and control apps.",
+            "Cenno sends keyboard shortcuts to switch Spaces and control apps.",
     },
 )

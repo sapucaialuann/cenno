@@ -1,5 +1,5 @@
 """
-newMotion: menu bar app for macOS.
+Cenno: menu bar app for macOS.
 
 Wraps the gesture engine from hand_desktop_switcher_claude.py in a normal Mac
 app: a menu bar icon, no Terminal, optional camera preview, pause, mouse
@@ -22,11 +22,19 @@ import rumps
 
 import hand_desktop_switcher_claude as core
 
-APP_NAME = "newMotion"
+APP_NAME = "Cenno"
 VERSION = "0.1.0"
 SUPPORT_DIR = os.path.expanduser(f"~/Library/Application Support/{APP_NAME}")
 LOG_PATH = os.path.expanduser(f"~/Library/Logs/{APP_NAME}.log")
 SETTINGS_PATH = os.path.join(SUPPORT_DIR, "settings.json")
+
+# One-time move of settings from the app's old name (newMotion).
+_OLD_SUPPORT_DIR = os.path.expanduser("~/Library/Application Support/newMotion")
+if os.path.isdir(_OLD_SUPPORT_DIR) and not os.path.exists(SUPPORT_DIR):
+    try:
+        os.rename(_OLD_SUPPORT_DIR, SUPPORT_DIR)
+    except OSError:
+        pass
 SUPPORT_URL = "https://ko-fi.com/sapucaialuann"
 DEFAULT_SETTINGS = {"enabled": True, "preview": True, "mouse": True,
                     "preview_corner": "top_right",
@@ -363,7 +371,7 @@ class MiniPreview:
 # Menu bar app
 # =============================================================================
 
-class NewMotionApp(rumps.App):
+class CennoApp(rumps.App):
     def __init__(self):
         super().__init__(APP_NAME, title="✋", quit_button=None)
         self.settings = load_settings()
@@ -374,7 +382,7 @@ class NewMotionApp(rumps.App):
 
         self.status_item = rumps.MenuItem("Starting...")
         self.pause_item = rumps.MenuItem("Pause gestures", callback=self.toggle_pause, key="p")
-        self.enabled_item = rumps.MenuItem("newMotion on", callback=self.toggle_enabled, key="o")
+        self.enabled_item = rumps.MenuItem("Cenno on", callback=self.toggle_enabled, key="o")
         self.preview_menu = rumps.MenuItem("Camera preview")
         self.preview_item = rumps.MenuItem("Show preview", callback=self.toggle_preview)
         self.preview_menu.add(self.preview_item)
@@ -409,10 +417,10 @@ class NewMotionApp(rumps.App):
                      self.pause_item, self.preview_menu,
                      self.mouse_item, self.dictation_menu, None, gestures, perms,
                      self.login_item, None,
-                     rumps.MenuItem("Support newMotion ☕",
+                     rumps.MenuItem("Support Cenno ☕",
                                     callback=lambda _: os.system(f"open '{SUPPORT_URL}'")),
                      rumps.MenuItem(f"About {APP_NAME} {VERSION}"),
-                     rumps.MenuItem("Quit newMotion", callback=self.quit_app, key="q")]
+                     rumps.MenuItem("Quit Cenno", callback=self.quit_app, key="q")]
         self._sync_checks()
 
         self._register_url_handler()
@@ -471,7 +479,7 @@ class NewMotionApp(rumps.App):
             ok = accessibility_trusted()
             if ok and not self.ax_ok:
                 print("accessibility granted")
-                self._notify("newMotion is ready", "Accessibility is on. Gestures can now control your Mac.")
+                self._notify("Cenno is ready", "Accessibility is on. Gestures can now control your Mac.")
             self.ax_ok = ok
         self.ax_item.title = ("Allow Accessibility... (required)" if not self.ax_ok
                               else "Accessibility: allowed")
@@ -517,11 +525,11 @@ class NewMotionApp(rumps.App):
             rumps.alert(APP_NAME, "Accessibility is already allowed.")
             return
         choice = rumps.alert(
-            title="Allow newMotion to control your Mac",
-            message=("newMotion needs Accessibility access to switch Spaces, scroll, "
+            title="Allow Cenno to control your Mac",
+            message=("Cenno needs Accessibility access to switch Spaces, scroll, "
                      "change volume and move the mouse.\n\n"
                      "1. Click Open Settings.\n"
-                     "2. Turn on newMotion in the list (use + to add it if it is missing).\n"
+                     "2. Turn on Cenno in the list (use + to add it if it is missing).\n"
                      "3. Gestures start working right away."),
             ok="Open Settings", cancel="Later")
         if choice == 1:
@@ -546,10 +554,10 @@ class NewMotionApp(rumps.App):
         self.settings["enabled"] = on
         save_settings(self.settings)
         self._sync_checks()
-        print(f"newMotion {'on' if on else 'off'}")
+        print(f"Cenno {'on' if on else 'off'}")
 
     def _register_url_handler(self):
-        """newmotion://on, newmotion://off, newmotion://toggle (for Voice
+        """cenno://on, cenno://off, cenno://toggle (for Voice
         Control commands, Shortcuts, Raycast, or `open` in Terminal)."""
         try:
             import Foundation
@@ -663,7 +671,7 @@ def set_login_item(enable):
 def main():
     if getattr(sys, "frozen", False):
         setup_logging()
-    NewMotionApp().run()
+    CennoApp().run()
 
 
 if __name__ == "__main__":
