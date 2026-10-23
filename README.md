@@ -12,7 +12,14 @@ Control your Mac with hand gestures through the webcam. Runs on your Mac. Nothin
 4. Enable Cenno under **System Settings > Privacy & Security > Accessibility** (needed to send shortcuts, scroll and move the mouse), then reopen it.
 5. In **System Settings > Keyboard > Keyboard Shortcuts > Mission Control**, make sure "Move left/right a space", "Mission Control" and "Application windows" are on.
 
-Cenno lives in the menu bar (hand icon): on/off (turns the camera off without quitting), pause, camera preview on/off and corner position, mouse control on/off, open at login, gesture list.
+Cenno lives in the menu bar (hand icon): on/off (turns the camera off without quitting), pause, camera preview on/off and corner position, mouse control on/off, open at login, gesture list. With two or more displays connected there is also a **Displays** menu: **Current display** keeps the cursor on the screen it is already on, **All displays** lets the hand reach every screen, and **Move pointer to next display** hops the cursor over. Scrolling and Space switching follow the screen your hand is on.
+
+## Several displays
+
+- The cursor stays on one screen by default: whichever one it is on when you start pointing. That display is picked once per gesture, so crossing an edge mid-gesture never moves the target under your hand.
+- Choose **Displays > All displays** to have the hand span the whole desk instead: moving it sideways walks from one monitor to the next, at the cost of a smaller movement range per screen.
+- Plugging a display in or rearranging the desk is picked up within a quarter of a second. The cursor glides to its new spot instead of jumping.
+- Scrolling and Space switching are sent to the screen the hand is on: Cenno moves the cursor there first (no click) so macOS gives that screen the focus.
 
 ## Voice and URL commands
 
@@ -44,6 +51,8 @@ Voice Control > Commands > +): phrase "Cenno on", action **Open URL**,
 - `cenno_app.py`: the menu bar app.
 - `theme.py`: design tokens (colour, type, space, radius, motion) for Day and Night. The only place these values live.
 - `hand_desktop_switcher.py`: gesture engine (also runs standalone with a preview window).
+- `displays.py`: screen geometry (plain maths, tested without a camera).
+- `tests/`: `python tests/test_displays.py` and `python tests/test_pointer_mapping.py`.
 - `build_mac.sh`, `Cenno.spec`, `requirements-build.txt`: build the app and DMG (`./build_mac.sh`).
 
 ## Run from source
