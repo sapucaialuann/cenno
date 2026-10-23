@@ -39,11 +39,16 @@ if os.path.isdir(_OLD_SUPPORT_DIR) and not os.path.exists(SUPPORT_DIR):
 SUPPORT_URL = "https://ko-fi.com/sapucaialuann"
 DEFAULT_SETTINGS = {"enabled": True, "preview": True, "mouse": True,
                     "preview_corner": "top_right",
+                    "preview_size": "medium", "preview_pos": None,
                     "dictation": "auto", "dictation_shortcut": ""}
 DICTATION_MODES = (("auto", "Automatic (Wispr Flow if running, else Apple)"),
                    ("wispr", "Wispr Flow"), ("apple", "Apple Dictation"),
                    ("custom", "Other app (custom shortcut)..."))
 PREVIEW_W, PREVIEW_H = 280, 210        # floating corner preview (points)
+PREVIEW_SIZES = (("small", "Small", (200, 150)),
+                 ("medium", "Medium (default)", (280, 210)),
+                 ("large", "Large", (400, 300)))
+PREVIEW_PX = [PREVIEW_W, PREVIEW_H]    # current panel size, read by the camera thread
 PREVIEW_MARGIN = theme.SPACE[3]
 PRIVACY_LINE = "Runs on your Mac. Nothing leaves it."
 SUPPORT_LINE = "Cenno is free. If it helps you, you can support it on Ko-fi."
@@ -69,7 +74,8 @@ def gesture_lines():
             "Wave, open hand side to side · Lock screen",
             "Rock horns, hold · Pause or resume gestures")
 CORNERS = (("top_right", "Top right (default)"), ("top_left", "Top left"),
-           ("bottom_right", "Bottom right"), ("bottom_left", "Bottom left"))
+           ("bottom_right", "Bottom right"), ("bottom_left", "Bottom left"),
+           ("free", "Anywhere (drag to move)"))
 
 POINTER_EVENTS = ("pointer_move", "pointer_end", "click", "mouse_down", "mouse_up")
 
@@ -313,7 +319,8 @@ class Tracker(threading.Thread):
                 cv2.rectangle(frame, (int(x0 * w), int(y0 * h)),
                               (int(x1 * w), int(y1 * h)), box, 2)
         # Render at 2x the panel size so it stays sharp on Retina screens.
-        small = cv2.resize(frame, (PREVIEW_W * 2, PREVIEW_H * 2), interpolation=cv2.INTER_AREA)
+        pw, ph = PREVIEW_PX
+        small = cv2.resize(frame, (pw * 2, ph * 2), interpolation=cv2.INTER_AREA)
         sh, sw = small.shape[:2]
         font = cv2.FONT_HERSHEY_SIMPLEX
         s2 = 2                                   # token px -> render px
@@ -367,17 +374,36 @@ class Tracker(threading.Thread):
         return jpg.tobytes() if ok else None
 
 
+_DRAG_VIEW = None
+
+
+def _drag_view_class():
+    """Transparent view that lets a mouse drag move the preview window."""
+    global _DRAG_VIEW
+    if _DRAG_VIEW is None:
+        import AppKit
+
+        class CennoDragView(AppKit.NSView):
+            def mouseDownCanMoveWindow(self):
+                return True
+
+        _DRAG_VIEW = CennoDragView
+    return _DRAG_VIEW
+
+
 class MiniPreview:
     """Borderless floating panel in a screen corner: above all apps, on
     every Space (also over full-screen apps), and clicks pass through it."""
 
-    def __init__(self, corner="top_right", dark=False):
+    def __init__(self, corner="top_right", dark=False, size=(PREVIEW_W, PREVIEW_H), pos=None):
         import AppKit
         self.AK = AppKit
         self.corner = corner
+        self.w, self.h = size
+        self.pos = tuple(pos) if pos else None
         style = AppKit.NSWindowStyleMaskBorderless | AppKit.NSWindowStyleMaskNonactivatingPanel
         panel = AppKit.NSPanel.alloc().initWithContentRect_styleMask_backing_defer_(
-            ((0, 0), (PREVIEW_W, PREVIEW_H)), style, AppKit.NSBackingStoreBuffered, False)
+            ((0, 0), (self.w, self.h)), style, AppKit.NSBackingStoreBuffered, False)
         panel.setLevel_(AppKit.NSStatusWindowLevel)
         panel.setCollectionBehavior_(
             AppKit.NSWindowCollectionBehaviorCanJoinAllSpaces
@@ -390,13 +416,20 @@ class MiniPreview:
         panel.setIgnoresMouseEvents_(True)
         panel.setHidesOnDeactivate_(False)
         panel.setFloatingPanel_(True)
-        view = AppKit.NSImageView.alloc().initWithFrame_(((0, 0), (PREVIEW_W, PREVIEW_H)))
+        view = AppKit.NSImageView.alloc().initWithFrame_(((0, 0), (self.w, self.h)))
         view.setImageScaling_(AppKit.NSImageScaleAxesIndependently)
         view.setWantsLayer_(True)
         view.layer().setCornerRadius_(theme.RADIUS_MD)
         view.layer().setMasksToBounds_(True)
         view.layer().setBorderWidth_(1)
-        panel.setContentView_(view)
+        container = AppKit.NSView.alloc().initWithFrame_(((0, 0), (self.w, self.h)))
+        container.setAutoresizesSubviews_(True)
+        view.setAutoresizingMask_(AppKit.NSViewWidthSizable | AppKit.NSViewHeightSizable)
+        container.addSubview_(view)
+        grip = _drag_view_class().alloc().initWithFrame_(((0, 0), (self.w, self.h)))
+        grip.setAutoresizingMask_(AppKit.NSViewWidthSizable | AppKit.NSViewHeightSizable)
+        container.addSubview_(grip)              # on top: lets the panel be dragged
+        panel.setContentView_(container)
         self.panel, self.view = panel, view
         self.visible = False
         self.apply_theme(dark)
@@ -407,20 +440,59 @@ class MiniPreview:
         layer.setBackgroundColor_(theme.ns_color("paper-sunk", dark).CGColor())
         layer.setBorderColor_(theme.ns_color("line", dark).CGColor())
 
+    def _corner_origin(self, corner):
+        vf = self.AK.NSScreen.mainScreen().visibleFrame()
+        left = corner.endswith("left")
+        top = corner.startswith("top")
+        x = vf.origin.x + (PREVIEW_MARGIN if left
+                           else vf.size.width - self.w - PREVIEW_MARGIN)
+        y = vf.origin.y + (vf.size.height - self.h - PREVIEW_MARGIN if top
+                           else PREVIEW_MARGIN)
+        return x, y
+
+    def _on_screen(self, x, y):
+        """Keep a dragged position visible, e.g. after a monitor is unplugged."""
+        for screen in self.AK.NSScreen.screens():
+            vf = screen.visibleFrame()
+            cx, cy = x + self.w / 2, y + self.h / 2
+            if (vf.origin.x <= cx <= vf.origin.x + vf.size.width
+                    and vf.origin.y <= cy <= vf.origin.y + vf.size.height):
+                x = min(max(x, vf.origin.x), vf.origin.x + vf.size.width - self.w)
+                y = min(max(y, vf.origin.y), vf.origin.y + vf.size.height - self.h)
+                return x, y
+        return None
+
     def place(self):
         """Chosen corner of the main screen (top corners sit under the menu
-        bar, bottom corners above the Dock)."""
-        vf = self.AK.NSScreen.mainScreen().visibleFrame()
-        left = self.corner.endswith("left")
-        top = self.corner.startswith("top")
-        x = vf.origin.x + (PREVIEW_MARGIN if left
-                           else vf.size.width - PREVIEW_W - PREVIEW_MARGIN)
-        y = vf.origin.y + (vf.size.height - PREVIEW_H - PREVIEW_MARGIN if top
-                           else PREVIEW_MARGIN)
-        self.panel.setFrameOrigin_((x, y))
+        bar, bottom corners above the Dock), or the spot it was dragged to."""
+        free = self.corner == "free"
+        # Click-through in corner mode; draggable in free mode.
+        self.panel.setIgnoresMouseEvents_(not free)
+        self.panel.setMovableByWindowBackground_(free)
+        origin = None
+        if free and self.pos:
+            origin = self._on_screen(*self.pos)
+        if origin is None:
+            origin = self._corner_origin("top_right" if free else self.corner)
+        self.panel.setFrameOrigin_(origin)
+
+    def origin(self):
+        o = self.panel.frame().origin
+        return (round(o.x), round(o.y))
 
     def set_corner(self, corner):
+        if corner == "free" and self.corner != "free":
+            self.pos = self.origin()             # start from where it is now
         self.corner = corner
+        self.place()
+
+    def set_size(self, size):
+        old_top = self.panel.frame().origin.y + self.h
+        x = self.panel.frame().origin.x
+        self.w, self.h = size
+        self.panel.setContentSize_((self.w, self.h))
+        if self.corner == "free":
+            self.pos = (x, old_top - self.h)     # keep the top-left corner in place
         self.place()
 
     def show(self):
@@ -449,6 +521,7 @@ class CennoApp(rumps.App):
     def __init__(self):
         super().__init__(APP_NAME, title=APP_NAME, quit_button=None)
         self.settings = load_settings()
+        PREVIEW_PX[0], PREVIEW_PX[1] = self._preview_size()
         self.tracker = Tracker(self.settings)
         self.preview = None
         self.icon_set = False
@@ -467,6 +540,14 @@ class CennoApp(rumps.App):
             item.corner_key = key
             self.preview_menu.add(item)
             self.corner_items[key] = item
+        self.preview_menu.add(rumps.separator)
+        self.preview_menu.add(rumps.MenuItem("Size:"))
+        self.size_items = {}
+        for key, label, _ in PREVIEW_SIZES:
+            item = rumps.MenuItem(label, callback=self.set_preview_size)
+            item.size_key = key
+            self.preview_menu.add(item)
+            self.size_items[key] = item
         self.mouse_item = rumps.MenuItem("Mouse control (point + pinch)", callback=self.toggle_mouse)
         self.dictation_menu = rumps.MenuItem("Dictation (hang loose)")
         self.dictation_items = {}
@@ -521,6 +602,8 @@ class CennoApp(rumps.App):
         d.dictation_shortcut = sc
         for key, item in self.corner_items.items():
             item.state = int(self.settings["preview_corner"] == key)
+        for key, item in self.size_items.items():
+            item.state = int(self.settings["preview_size"] == key)
         self.mouse_item.state = int(self.settings["mouse"])
         self.login_item.state = int(login_item_enabled())
 
@@ -576,7 +659,8 @@ class CennoApp(rumps.App):
     def tick_preview(self, _):
         if self.preview is None:
             try:
-                self.preview = MiniPreview(self.settings["preview_corner"], bool(self.dark))
+                self.preview = MiniPreview(self.settings["preview_corner"], bool(self.dark),
+                                           self._preview_size(), self.settings.get("preview_pos"))
             except Exception:
                 print("WARN: preview unavailable:\n" + traceback.format_exc())
                 self.settings["preview"] = False
@@ -594,6 +678,30 @@ class CennoApp(rumps.App):
         if jpg:
             self.preview.set_jpeg(jpg)
             self.preview.show()
+        self._remember_drag()
+
+    def _remember_drag(self):
+        """Save the preview's spot after it has been dragged (and let go)."""
+        if self.settings["preview_corner"] != "free" or not self.preview.visible:
+            return
+        pos = list(self.preview.origin())
+        if pos == self.settings.get("preview_pos"):
+            self._drag_since = None
+            return
+        now = time.time()
+        if getattr(self, "_drag_since", None) is None:
+            self._drag_since = now
+        elif now - self._drag_since > 0.7:      # stopped moving: save once
+            self.settings["preview_pos"] = pos
+            self.preview.pos = tuple(pos)
+            save_settings(self.settings)
+            self._drag_since = None
+
+    def _preview_size(self):
+        for key, _, size in PREVIEW_SIZES:
+            if key == self.settings.get("preview_size"):
+                return size
+        return (PREVIEW_W, PREVIEW_H)
 
     def _notify(self, title, msg):
         try:
@@ -678,9 +786,22 @@ class CennoApp(rumps.App):
 
     def set_corner(self, sender):
         self.settings["preview_corner"] = sender.corner_key
-        save_settings(self.settings)
         if self.preview:
             self.preview.set_corner(sender.corner_key)
+            if sender.corner_key == "free":
+                self.settings["preview_pos"] = list(self.preview.origin())
+        save_settings(self.settings)
+        self._sync_checks()
+
+    def set_preview_size(self, sender):
+        self.settings["preview_size"] = sender.size_key
+        size = self._preview_size()
+        PREVIEW_PX[0], PREVIEW_PX[1] = size
+        if self.preview:
+            self.preview.set_size(size)
+            if self.settings["preview_corner"] == "free":
+                self.settings["preview_pos"] = list(self.preview.origin())
+        save_settings(self.settings)
         self._sync_checks()
 
     def set_dictation(self, sender):
