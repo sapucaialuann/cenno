@@ -48,6 +48,10 @@ Design notes
     up), which is what macOS needs to switch Spaces.  Media keys (volume,
     play/pause) are real system media keys, so the native HUD appears.
   * Scrolling is pixel-smooth at 120 Hz with momentum, on its own thread.
+  * Several displays: the pointer can stay on the screen under the cursor
+    (default) or span every screen, so moving the hand sideways walks from one
+    monitor to the next.  Scrolling and Space switching go to the screen the
+    hand is on: the cursor is moved there first, without clicking.
 
 macOS permissions
   * Camera + Accessibility for the app running Python (Terminal, iTerm, IDE).
@@ -70,6 +74,8 @@ import subprocess
 import threading
 import time
 from collections import deque
+
+import displays as dpy
 
 
 # =============================================================================
@@ -858,6 +864,17 @@ MEDIA_KEYS = {"volume_up": ("volumeup", NX_SOUND_UP),
               "play_pause": ("playpause", NX_PLAY)}
 PYAUTOGUI_NAMES = {"cmd": "command", "alt": "option"} if OS_NAME == "Darwin" else {}
 
+# Where the pointer box points: one screen, or every screen at once.
+DISPLAY_MODE_CURRENT = "current"
+DISPLAY_MODE_ALL = "all"
+# Gestures macOS routes to the screen holding the cursor.  Scroll (below) and
+# these keys move the cursor there first, so they follow the hand instead of
+# the screen that happened to have the focus.
+FOCUS_SCREEN_ACTIONS = ("space_left", "space_right", "overview", "app_windows",
+                        "close_overview")
+# How often the scroll thread may re-check which screen it should be on.
+FOCUS_CHECK_SECONDS = 0.05
+
 
 class Dispatcher:
     def __init__(self):
@@ -873,10 +890,108 @@ class Dispatcher:
                 self.quartz, self.appkit = Quartz, AppKit
             except ImportError:
                 print("WARN: Quartz/AppKit not available; using pyautogui keys.")
-        self.scroller = ScrollAnimator(self.quartz, self.pag)
-        self.pointer = PointerAnimator(self.quartz, self.pag)
+        self.display_mode = DISPLAY_MODE_CURRENT
+        self.layout = dpy.DisplayLayout.fallback(self.pag.size())
+        self._focus_checked = 0.0
+        self.refresh_displays()
+        self.scroller = ScrollAnimator(self.quartz, self.pag,
+                                       before_post=self._focus_screen)
+        self.pointer = PointerAnimator(self.quartz, self.pag, self.layout,
+                                       cursor_pos=self.cursor_position)
         self.q = queue.Queue()
         threading.Thread(target=self._worker, daemon=True).start()
+
+    # --- screens ---
+    def refresh_displays(self):
+        """Ask the window server for the screens again.  Cheap enough to call
+        a few times a second, which is how Cenno notices a display being
+        plugged in, unplugged or rearranged.  True when it changed."""
+        layout = dpy.DisplayLayout.fallback(self.pag.size())
+        if self.quartz is not None:
+            found = dpy.quartz_displays(self.quartz)
+            if found:
+                layout = dpy.DisplayLayout(found)
+        if layout.equals(self.layout):
+            return False
+        self.layout = layout
+        if getattr(self, "pointer", None) is not None:
+            self.pointer.set_layout(layout)
+            if self.pointer.mode != self.display_mode:
+                self.pointer.set_mode(self.display_mode)
+        print(f"displays: {layout.describe()}")
+        return True
+
+    def set_display_mode(self, mode):
+        if mode not in (DISPLAY_MODE_CURRENT, DISPLAY_MODE_ALL):
+            return
+        if mode == self.display_mode:
+            return
+        self.display_mode = mode
+        self.pointer.set_mode(mode)
+        print(f"pointer mode: {mode}")
+
+    def jump_to_next_display(self):
+        """Move the cursor to the next screen (menu action).  No click, so
+        nothing in the app on that screen is triggered."""
+        if self.layout.count < 2:
+            return False
+        here = self.pointer.cursor_position() or self._raw_cursor()
+        index = self.layout.next_index(self.layout.nearest(here))
+        self.pointer.focus_display(index)
+        self._warp(self.layout.center(index))
+        print(f"cursor -> display {index + 1} of {self.layout.count}")
+        return True
+
+    def cursor_position(self):
+        """Where the cursor is, in the same global space as the display rects.
+        Quartz is asked directly: pyautogui's reading is the main screen only
+        on some macOS versions."""
+        if self.quartz is not None:
+            try:
+                loc = self.quartz.CGEventCreate(None).location()
+                return (float(loc.x), float(loc.y))
+            except Exception:
+                pass
+        x, y = self.pag.position()
+        return (float(x), float(y))
+
+    def _raw_cursor(self):
+        try:
+            return self.cursor_position()
+        except Exception:
+            return self.layout.center(self.layout.primary)
+
+    def _warp(self, point):
+        """Move the cursor to point with no button pressed.  This is what
+        hands a screen its focus back: macOS switches Spaces per screen and
+        follows the cursor."""
+        x, y = (float(point[0]), float(point[1]))
+        if self.quartz is not None:
+            Q = self.quartz
+            e = Q.CGEventCreateMouseEvent(None, Q.kCGEventMouseMoved, (x, y),
+                                          Q.kCGMouseButtonLeft)
+            Q.CGEventPost(Q.kCGHIDEventTap, e)
+        else:
+            self.pag.moveTo(x, y, _pause=False)
+        self.pointer.note_external_move((x, y))
+
+    def _focus_screen(self):
+        """Put the cursor on the screen the gesture is aimed at, so scrolling
+        and Space switching act on that screen.  One screen: never any of
+        this, which keeps single-display behaviour exactly as it was."""
+        if self.layout.count < 2:
+            return
+        now = time.monotonic()
+        if now - self._focus_checked < FOCUS_CHECK_SECONDS:
+            return
+        self._focus_checked = now
+        aim = self.pointer.target_pixel()
+        if aim is None:
+            return
+        want = self.layout.nearest(aim)
+        here = self.layout.nearest(self._raw_cursor())
+        if want != here:
+            self._warp(self.layout.center(want))
 
     def submit(self, name, n=1):
         # Scroll goes straight to the animator (it has its own thread).
@@ -919,6 +1034,10 @@ class Dispatcher:
         keys = self.bindings.get(name)
         if not keys:
             return
+        if name in FOCUS_SCREEN_ACTIONS:
+            # Space, Mission Control and App windows belong to the screen the
+            # cursor is on, so make sure that is the screen we mean.
+            self._focus_screen()
         # Real key presses: each modifier goes down, then the key, then
         # everything comes back up.  macOS only fires Space switching
         # (Ctrl+Arrow) when Control is actually held, not just flagged.
@@ -1063,35 +1182,109 @@ class Dispatcher:
 
 class PointerAnimator:
     """Moves the real cursor at 120 Hz toward the target the engine sets at
-    camera rate, and performs clicks / drags in order on the same thread."""
+    camera rate, and performs clicks / drags in order on the same thread.
 
-    def __init__(self, quartz, pag):
+    The engine speaks in 0..1; which pixels that means depends on the display
+    mode: one screen (the one under the cursor) or every screen (their union).
+    The target is kept normalized and only converted when it is posted, so
+    plugging in a display or rearranging the desk never teleports the cursor,
+    and crossing from one screen to the next is just more distance to
+    smooth through."""
+
+    def __init__(self, quartz, pag, layout=None, cursor_pos=None):
         self.Q, self.pag = quartz, pag
-        sw, sh = pag.size()
-        self.sw, self.sh = sw, sh
+        self.layout = layout or dpy.DisplayLayout.fallback(pag.size())
+        self.cursor_pos = cursor_pos or (lambda: tuple(pag.position()))
+        self.mode = DISPLAY_MODE_CURRENT
+        self.display = None
+        self.rect = self.layout.map_rect(self.mode)
         self.lock = threading.Lock()
         self.wake = threading.Event()
-        self.target = None
+        self.target = None        # pixels, in the global desktop
+        self.target_n = None      # 0..1, straight from the engine
         self.pos = None
         self.button_down = False
         self.last_posted = None
         self.actions = deque()
         threading.Thread(target=self._run, daemon=True).start()
 
+    # --- screens ---
+    def set_layout(self, layout):
+        with self.lock:
+            self.layout = layout
+            self.rect = layout.map_rect(self.mode, self.display)
+            self._update_target()
+
+    def set_mode(self, mode):
+        with self.lock:
+            self.mode = (mode if mode in (DISPLAY_MODE_CURRENT, DISPLAY_MODE_ALL)
+                         else DISPLAY_MODE_CURRENT)
+            if self.mode == DISPLAY_MODE_ALL:
+                self.display = None
+            elif self.display is None:
+                self.display = self.layout.nearest(self.pos or self.cursor_pos())
+            self.rect = self.layout.map_rect(self.mode, self.display)
+            self._update_target()
+
+    def focus_display(self, index):
+        """Next point gesture aims at this screen, even if the cursor is
+        still somewhere else."""
+        with self.lock:
+            self.display = index
+            if self.mode != "all":
+                self.rect = self.layout.map_rect(self.mode, index)
+                self._update_target()
+
+    def cursor_position(self):
+        """Where the cursor really is now, or None while it is ours."""
+        if self.pos is not None:
+            return self.pos
+        try:
+            return tuple(self.cursor_pos())
+        except Exception:
+            return None
+
+    def target_pixel(self):
+        """Where the hand is aiming, or None when the hand is not pointing."""
+        with self.lock:
+            return self.target
+
+    def note_external_move(self, point):
+        """Something else moved the cursor (a focus warp, the real mouse):
+        accept it instead of dragging the cursor back."""
+        with self.lock:
+            self.pos = (float(point[0]), float(point[1]))
+            self.last_posted = self.pos
+
+    def _update_target(self):
+        if self.target_n is None:
+            self.target = None
+        else:
+            self.target = dpy.normalized_to_rect(self.target_n, self.rect)
+
     def _to_px(self, n):
-        # Stay 1 px inside the edges: pyautogui's fail-safe trips on corners.
-        return (min(self.sw - 2, max(1, n[0] * self.sw)),
-                min(self.sh - 2, max(1, n[1] * self.sh)))
+        # The engine's 0..1 in the target rect, padded off the edges:
+        # pyautogui's fail-safe trips on corners and the cursor should not
+        # stick on a bezel.
+        return dpy.normalized_to_rect(n, self.rect)
 
     def handle(self, name, arg):
         with self.lock:
             if name == "pointer_move":
-                self.target = self._to_px(arg)
+                if self.target_n is None:
+                    # Start of a gesture: whatever screen the cursor is on is
+                    # the one this gesture belongs to.
+                    self.display = self.layout.nearest(self.cursor_pos())
+                    self.rect = self.layout.map_rect(self.mode, self.display)
+                self.target_n = (min(1.0, max(0.0, arg[0])),
+                                 min(1.0, max(0.0, arg[1])))
+                self._update_target()
                 if self.pos is None:
-                    x, y = self.pag.position()
+                    x, y = self.cursor_pos()
                     self.pos = (float(x), float(y))
             elif name == "pointer_end":
                 self.target = None
+                self.target_n = None
                 self.pos = None
             elif name == "click":
                 pos, count = arg
@@ -1174,10 +1367,13 @@ class ScrollAnimator:
                camera steps don't feel steppy.  Dragging against a glide
                stops it, like touching a trackpad.
     fling(v):  start (or boost) a glide at v px/s that decays exponentially.
-    Negative px = scroll down (content moves up)."""
+    Negative px = scroll down (content moves up).
+    before_post():  called before the pixels go out, so the Dispatcher can
+                put the cursor on the right screen first."""
 
-    def __init__(self, quartz, pag):
+    def __init__(self, quartz, pag, before_post=None):
         self.Q, self.pag = quartz, pag
+        self.before_post = before_post
         self.lock = threading.Lock()
         self.wake = threading.Event()
         self.pending = 0.0
@@ -1230,6 +1426,8 @@ class ScrollAnimator:
                     print(f"WARN: scroll failed: {exc}")
 
     def _post(self, px):
+        if self.before_post is not None:
+            self.before_post()
         if self.Q is not None:
             Q = self.Q
             e = Q.CGEventCreateScrollWheelEvent(None, Q.kCGScrollEventUnitPixel, 1, px)
