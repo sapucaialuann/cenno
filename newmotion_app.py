@@ -58,6 +58,7 @@ def gesture_lines():
             "Thumbs down, hold · Undo dictated text",
             "Hang loose, hold · Dictation on or off",
             "Open hand, gather fingertips · Spotlight",
+            "Wave, open hand side to side · Lock screen",
             "Rock horns, hold · Pause or resume gestures")
 CORNERS = (("top_right", "Top right (default)"), ("top_left", "Top left"),
            ("bottom_right", "Bottom right"), ("bottom_left", "Bottom left"))

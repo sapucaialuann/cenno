@@ -30,6 +30,7 @@ frame, so they work whether you sit close to the camera or across the room):
 
   OPEN HAND -> GATHER all fingertips together ("ma che vuoi")
                            -> Spotlight                    (Cmd+Space)
+  WAVE (open hand, side to side twice) -> lock screen     (Ctrl+Cmd+Q)
 
   ROCK HORNS (hold ~1 s)   -> pause / resume all gestures (fist = rest, does nothing)
 
@@ -226,6 +227,11 @@ VOLUME_DIRECTION = 1           # flip to -1 if clockwise feels backwards
 THUMBS_UP_HOLD_SECONDS = 0.5
 THUMBS_DOWN_HOLD_SECONDS = 0.5  # thumbs down: undo (deletes dictated text)
 GATHER_FROM_OPEN_WINDOW = 0.6  # gather must follow an open hand within this
+LAUNCHER_COOLDOWN_SECONDS = 1.5  # Cmd+Space toggles: one fire per gesture, ignore flicker
+WAVE_STROKE_PALMS = 0.35       # wave: each side-to-side stroke at least this far
+WAVE_MIN_REVERSALS = 3         # direction changes needed (two full waves)
+WAVE_WINDOW_SECONDS = 1.5      # ...all within this long
+WAVE_COOLDOWN_SECONDS = 3.0    # one lock per wave
 PAUSE_HOLD_SECONDS = 1.0       # rock horns held this long pauses / resumes (0 = off)
 HORNS_THUMB_MAX_SPAN = 0.85    # thumb tip to pinky tip below this = thumb tucked
 
@@ -384,6 +390,9 @@ class GestureEngine:
         self.last_fire = -1e9
         self.overview_until = 0.0
         self.last_open_time = -1e9
+        self.last_launcher = -1e9
+        self.last_lock = -1e9
+        self._wave_reset()
         self.last_click_time = -1e9
         self.last_click_pos = (0.0, 0.0)
         self._reset_hand()
@@ -405,6 +414,38 @@ class GestureEngine:
         self.latched = False
         self.debug = {}
         self._reset_pose_state()
+
+    def _wave_reset(self):
+        self.wave_anchor = None
+        self.wave_dir = 0
+        self.wave_ext = 0.0
+        self.wave_flips = deque()
+
+    def _wave_step(self, x, now):
+        """Open hand moving side to side. x is the centroid in palm units."""
+        if now - self.last_lock < WAVE_COOLDOWN_SECONDS:
+            return False
+        if self.wave_anchor is None:
+            self.wave_anchor = self.wave_ext = x
+            return False
+        if self.wave_dir == 0:
+            if abs(x - self.wave_anchor) >= WAVE_STROKE_PALMS:
+                self.wave_dir = 1 if x > self.wave_anchor else -1
+                self.wave_ext = x
+            return False
+        if (x - self.wave_ext) * self.wave_dir > 0:
+            self.wave_ext = x
+        elif abs(self.wave_ext - x) >= WAVE_STROKE_PALMS:
+            self.wave_dir = -self.wave_dir
+            self.wave_ext = x
+            self.wave_flips.append(now)
+        while self.wave_flips and now - self.wave_flips[0] > WAVE_WINDOW_SECONDS:
+            self.wave_flips.popleft()
+        if len(self.wave_flips) >= WAVE_MIN_REVERSALS:
+            self.last_lock = now
+            self._wave_reset()
+            return True
+        return False
 
     def _reset_pose_state(self):
         self.knob_angle = None
@@ -485,8 +526,10 @@ class GestureEngine:
             self.buf.clear()
             self._reset_pose_state()
             if (raw_pose == "gather"
-                    and now - self.last_open_time <= GATHER_FROM_OPEN_WINDOW):
+                    and now - self.last_open_time <= GATHER_FROM_OPEN_WINDOW
+                    and now - self.last_launcher > LAUNCHER_COOLDOWN_SECONDS):
                 ev.append(("launcher", 1))
+                self.last_launcher = now
                 self.latched = True
         if self.pose == "open":
             self.last_open_time = now
@@ -586,6 +629,16 @@ class GestureEngine:
         # Two-finger scroll: drag follows the hand, flicks glide.
         if self.pose == "two" and warmed and step is not None:
             self._scroll_step(step, now, ev)
+
+        # Wave: open hand side to side a few times -> lock screen.
+        if self.pose == "open" and warmed:
+            if self._wave_step(cx / palm, now):
+                ev.append(("lock", 1))
+                self.buf.clear()
+                self.armed, self.still_since = False, None
+                self.last_fire = now
+        else:
+            self._wave_reset()
 
         # Swipes (open hand: 4 directions; two fingers: horizontal nav).
         family = self.pose if self.pose in ("open", "two") else None
@@ -783,13 +836,14 @@ KEY_BINDINGS = {
         "close_overview": ("escape",),
         "back": ("cmd", "["), "forward": ("cmd", "]"),
         "launcher": ("cmd", "space"), "undo": ("cmd", "z"),
+        "lock": ("ctrl", "cmd", "q"),
     },
     "Windows": {
         "space_left": ("ctrl", "win", "left"), "space_right": ("ctrl", "win", "right"),
         "overview": ("win", "tab"), "app_windows": ("win", "d"),
         "close_overview": ("escape",),
         "back": ("alt", "left"), "forward": ("alt", "right"),
-        "launcher": ("win",),
+        "launcher": ("win",), "lock": ("win", "l"),
     },
     "Linux": {
         "space_left": ("ctrl", "alt", "left"), "space_right": ("ctrl", "alt", "right"),
@@ -849,6 +903,9 @@ class Dispatcher:
         if name == "dictation":
             self._toggle_dictation()
             return
+        if name == "lock" and OS_NAME == "Darwin":
+            self._lock_screen()
+            return
         if name in MEDIA_KEYS:
             pag_key, nx = MEDIA_KEYS[name]
             for _ in range(n):
@@ -866,6 +923,18 @@ class Dispatcher:
         # everything comes back up.  macOS only fires Space switching
         # (Ctrl+Arrow) when Control is actually held, not just flagged.
         self.pag.hotkey(*[PYAUTOGUI_NAMES.get(k, k) for k in keys], interval=0.01)
+
+    def _lock_screen(self):
+        """Lock the Mac. A synthetic Ctrl+Cmd+Q is ignored by the system, so
+        call the same lock the Apple menu uses; fall back to the shortcut."""
+        try:
+            import ctypes
+            login = ctypes.CDLL("/System/Library/PrivateFrameworks/"
+                                "login.framework/Versions/Current/login")
+            login.SACLockScreenImmediate()
+        except Exception as exc:
+            print(f"WARN: lock via login.framework failed ({exc}); trying shortcut")
+            self.pag.hotkey("ctrl", "command", "q", interval=0.01)
 
     # Menu titles that mean Start / Stop Dictation (en, de, pt, es, fr).
     DICTATION_WORDS = ("dictation", "diktat", "ditado", "dictado", "dict\u00e9e")
@@ -1231,6 +1300,7 @@ HELP_LINES = (
     "hang loose (hold)       dictation on / off",
     "thumbs down (hold)      undo (delete dictated text)",
     "open -> gather tips     Spotlight",
+    "wave (open hand)        lock screen",
     "rock horns (hold)       pause / resume gestures",
     "key t: test Space switch (no gesture)",
 )
@@ -1239,7 +1309,7 @@ ACTION_LABELS = {
     "space_left": "SPACE <-", "space_right": "SPACE ->",
     "overview": "MISSION CONTROL", "app_windows": "APP WINDOWS",
     "close_overview": "CLOSE OVERVIEW", "back": "BACK", "forward": "FORWARD",
-    "launcher": "SPOTLIGHT", "volume_up": "VOLUME +", "volume_down": "VOLUME -",
+    "launcher": "SPOTLIGHT", "lock": "LOCK SCREEN", "volume_up": "VOLUME +", "volume_down": "VOLUME -",
     "play_pause": "PLAY / PAUSE", "dictation": "DICTATION", "undo": "UNDO", "scroll_drag": "SCROLL", "scroll_fling": "FLICK",
     "pause_on": "GESTURES PAUSED", "pause_off": "GESTURES ON",
     "click": "CLICK", "mouse_down": "DRAG", "mouse_up": "DROP",
