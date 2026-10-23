@@ -1,7 +1,7 @@
 # PyInstaller spec for Cenno.app (build with ./build_mac.sh)
 from PyInstaller.utils.hooks import collect_all
 
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 
 datas, binaries, hiddenimports = [], [], []
 d, b, h = collect_all("mediapipe")

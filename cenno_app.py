@@ -24,7 +24,7 @@ import hand_desktop_switcher as core
 import theme
 
 APP_NAME = "Cenno"
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 SUPPORT_DIR = os.path.expanduser(f"~/Library/Application Support/{APP_NAME}")
 LOG_PATH = os.path.expanduser(f"~/Library/Logs/{APP_NAME}.log")
 SETTINGS_PATH = os.path.join(SUPPORT_DIR, "settings.json")
