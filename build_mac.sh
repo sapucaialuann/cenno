@@ -21,6 +21,7 @@ done
 iconutil -c icns build/icon.iconset -o build/Cenno.icns
 
 echo "== app"
+rm -rf dist                 # no stale builds or old DMGs left behind
 "$VENV/bin/pyinstaller" --noconfirm --clean --log-level WARN Cenno.spec
 
 echo "== layered icon (Dark, Clear, Tinted)"
