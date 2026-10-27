@@ -31,6 +31,7 @@ Cenno lives in the menu bar (hand icon): on/off (turns the camera off without qu
 ## Several displays
 
 - The cursor stays on one screen by default: whichever one it is on when you start pointing. That display is picked once per gesture, so crossing an edge mid-gesture never moves the target under your hand.
+- Push the hand past the edge of the pointing area to hop to the display on that side. The hand has to come back inside before it can hop again, so one push is one screen.
 - Choose **Displays > All displays** to have the hand span the whole desk instead: moving it sideways walks from one monitor to the next, at the cost of a smaller movement range per screen.
 - Plugging a display in or rearranging the desk is picked up within a quarter of a second. The cursor glides to its new spot instead of jumping.
 - Scrolling and Space switching are sent to the screen the hand is on: Cenno moves the cursor there first (no click) so macOS gives that screen the focus.
@@ -66,7 +67,7 @@ Voice Control > Commands > +): phrase "Cenno on", action **Open URL**,
 - `theme.py`: design tokens (colour, type, space, radius, motion) for Day and Night. The only place these values live.
 - `hand_desktop_switcher.py`: gesture engine (also runs standalone with a preview window).
 - `displays.py`: screen geometry (plain maths, tested without a camera).
-- `tests/`: `python tests/test_displays.py` and `python tests/test_pointer_mapping.py`.
+- `tests/`: `python tests/run_all.py` runs them all (no camera needed).
 - `build_mac.sh`, `Cenno.spec`, `requirements-build.txt`: build the app and DMG (`./build_mac.sh`).
 
 ## Run from source
@@ -96,6 +97,7 @@ inside the app folder.
 The same two-screen solution as on macOS, using the Windows monitors:
 
 - **Displays > Current display** (default): the hand stays on the screen the cursor is on when it starts pointing. The screen is picked once per gesture, so crossing an edge mid-gesture never moves the target under your hand.
+- **Push the hand past the edge of the pointing area** to hop to the display on that side. The hand has to come back inside before it can hop again, so one push is one screen.
 - **Displays > All displays**: the hand spans the whole desk. Moving it sideways walks from one monitor to the next, at the cost of a smaller movement range per screen.
 - **Displays > Move pointer to next display**: hops the cursor to the next monitor without clicking anything.
 - Plugging a monitor in or rearranging the desk is picked up within a quarter of a second; the cursor glides to its new spot instead of jumping.
@@ -128,10 +130,7 @@ just the exe. See `INSTALLER_NOTES.md` for signing and releasing.
 
 Run the tests:
 
-    python tests\test_displays.py
-    python tests\test_pointer_mapping.py
-    python tests\test_dispatcher_displays.py
-    python tests\test_windows_displays.py
+    python tests\run_all.py
 
 ## Windows differences
 
