@@ -18,9 +18,9 @@ COLORS = {
     "on-ink":       ("#f4f1ea", "#14130f"),   # text on ink fill
     "line":         ("#d9d3c4", "#2e2b24"),   # hairlines, card outlines
     "line-strong":  ("#847d6b", "#6e685a"),   # control borders
-    "trace":        ("#c8f03c", "#c8f03c"),   # brand fill, live hand things
-    "trace-soft":   ("#e6f7a8", "#2a3310"),   # recognised-gesture flash
-    "trace-ink":    ("#4f6b00", "#c8f03c"),   # trace as text on paper
+    "trace":        ("#C9EB2E", "#C9EB2E"),   # brand fill, live hand things
+    "trace-soft":   ("#e4f0af", "#2b3013"),   # selected rows, cursor hover zone, recognised-spell flash
+    "trace-ink":    ("#526209", "#c9eb2e"),   # trace as text/icon/stroke on paper; success wording
     "on-trace":     ("#16140f", "#16140f"),   # text on trace and trace-soft
     "ember":        ("#ff5a1f", "#ff6b35"),   # held moment (pinch, drag)
     "ember-ink":    ("#ae3303", "#ff8a5c"),   # ember as text, warnings
@@ -73,7 +73,7 @@ FOCUS_OFFSET = 2
 
 MOTION_STATE_S = 0.120      # UI state changes, ease-out
 MOTION_OVERLAY_S = 0.200    # overlays appearing
-FLASH_S = 0.400             # recognised gesture: trace-soft, then settle
+FLASH_S = 0.400             # recognised spell: trace-soft, then settle
 
 
 # =============================================================================
