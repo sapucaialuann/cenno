@@ -2,7 +2,21 @@
 
 Formerly newMotion. Website: [cennoapp.com](https://cennoapp.com)
 
-Control your Mac with hand gestures through the webcam. Runs on your Mac. Nothing leaves it.
+Control your computer with hand gestures through the webcam. Runs on macOS
+and Windows. Nothing leaves it.
+
+| | macOS | Windows |
+|---|---|---|
+| Download | `Cenno-<version>.dmg` | `Cenno-<version>-Setup.exe` |
+| Where it lives | the menu bar | the system tray |
+| Permissions | Camera and Accessibility | Camera |
+
+The gestures are the same on both platforms. What a gesture *does* follows the
+platform, because macOS and Windows have different concepts for it: a
+left/right swipe switches Spaces on macOS and virtual desktops on Windows,
+swipe up opens Mission Control on macOS and Task View on Windows. Each
+platform has its own table below, and
+[Windows differences](#windows-differences) lists every one of them.
 
 ## Install (macOS, Apple Silicon)
 
