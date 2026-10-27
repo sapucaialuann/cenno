@@ -398,8 +398,20 @@ def _drag_view_class():
         import AppKit
 
         class CennoDragView(AppKit.NSView):
+            # Cenno is a menu bar app, so it is never the active app and the
+            # panel never becomes key. Without these, the first click is
+            # eaten and background dragging never starts. Move the window
+            # ourselves instead of relying on mouseDownCanMoveWindow.
+            def acceptsFirstMouse_(self, event):
+                return True
+
             def mouseDownCanMoveWindow(self):
                 return True
+
+            def mouseDown_(self, event):
+                win = self.window()
+                if win is not None and not win.ignoresMouseEvents():
+                    win.performWindowDragWithEvent_(event)
 
         _DRAG_VIEW = CennoDragView
     return _DRAG_VIEW
