@@ -202,6 +202,12 @@ LINE_PX = 40                   # pixels per scroll line (non-macOS fallback)
 # This box of the camera frame (fractions, mirrored view) maps to the whole
 # screen, so you never have to stretch to reach the screen edges.
 POINTER_BOX = (0.30, 0.25, 0.75, 0.65)   # x0, y0, x1, y1
+# Several displays: push the palm centre this far past an edge of the box
+# (fraction of the box size) and the pointer moves to the display on that
+# side.  The palm has to come back inside the box before it can happen again,
+# so one push is one screen.
+DISPLAY_EDGE_MARGIN = 0.12
+DISPLAY_EDGE_FRAMES = 3        # frames in a row past the edge (kills jitter)
 POINT_INDEX_MIN_RATIO = 0.90   # index must be at least this straight ...
 POINT_STAY_MIN_RATIO = 0.82    # ... to enter pointing; once in, it may bend
                                # this far (pinching bends it) without leaving
@@ -471,6 +477,9 @@ class GestureEngine:
         self.cursor_hist = deque()
         self.cursor_offset = (0.0, 0.0)
         self.cursor = None
+        self.edge_votes = 0
+        self.edge_dir = None
+        self.edge_armed = True
 
     def no_hand(self, now):
         ev = []
@@ -673,11 +682,37 @@ class GestureEngine:
         return ev
 
     # --- pointer ---
-    def _map_to_screen(self, x, y, w, h):
+    def _map_raw(self, x, y, w, h):
+        """Palm centre in box units, unclamped: 0..1 inside the box."""
         x0, y0, x1, y1 = POINTER_BOX
-        nx = (x / w - x0) / (x1 - x0)
-        ny = (y / h - y0) / (y1 - y0)
+        return ((x / w - x0) / (x1 - x0), (y / h - y0) / (y1 - y0))
+
+    def _map_to_screen(self, x, y, w, h):
+        nx, ny = self._map_raw(x, y, w, h)
         return (min(1.0, max(0.0, nx)), min(1.0, max(0.0, ny)))
+
+    def _edge_step(self, raw, ev):
+        """Palm pushed clearly past an edge of the box: ask for the display
+        on that side.  Re-armed once the palm is back inside the box."""
+        nx, ny = raw
+        m = DISPLAY_EDGE_MARGIN
+        if -m < nx < 1 + m and -m < ny < 1 + m:
+            if 0.0 <= nx <= 1.0 and 0.0 <= ny <= 1.0:
+                self.edge_armed = True
+            self.edge_votes, self.edge_dir = 0, None
+            return
+        if not self.edge_armed or (self.pinched and not self.dragging):
+            return
+        # The axis it overshoots most is the direction.
+        ox = nx - 1 if nx > 1 else nx if nx < 0 else 0.0
+        oy = ny - 1 if ny > 1 else ny if ny < 0 else 0.0
+        d = ((1 if ox > 0 else -1), 0) if abs(ox) >= abs(oy) else (0, (1 if oy > 0 else -1))
+        self.edge_votes = self.edge_votes + 1 if d == self.edge_dir else 1
+        self.edge_dir = d
+        if self.edge_votes >= DISPLAY_EDGE_FRAMES:
+            ev.append(("display_step", d))
+            self.edge_armed = False
+            self.edge_votes, self.edge_dir = 0, None
 
     def _pointer_step(self, pts, w, h, now, pinch, index_ratio, ev):
         if self.fx is None:
@@ -686,7 +721,9 @@ class GestureEngine:
         anchor = [pts[i] for i in (0, 5, 9, 13, 17)]
         ax = self.fx(sum(p[0] for p in anchor) / 5, now)
         ay = self.fy(sum(p[1] for p in anchor) / 5, now)
-        mapped = self._map_to_screen(ax, ay, w, h)
+        raw = self._map_raw(ax, ay, w, h)
+        mapped = (min(1.0, max(0.0, raw[0])), min(1.0, max(0.0, raw[1])))
+        self._edge_step(raw, ev)
         ox, oy = self.cursor_offset
         live = (mapped[0] + ox, mapped[1] + oy)
 
@@ -936,10 +973,27 @@ class Dispatcher:
         if self.layout.count < 2:
             return False
         here = self.pointer.cursor_position() or self._raw_cursor()
-        index = self.layout.next_index(self.layout.nearest(here))
+        index = self.layout.next_index(self.layout.screen_of(here))
         self.pointer.focus_display(index)
         self._warp(self.layout.center(index))
         print(f"cursor -> display {index + 1} of {self.layout.count}")
+        return True
+
+    def step_display(self, direction):
+        """The hand pushed out of the pointer box: hand the pointer to the
+        display on that side.  "All displays" already spans every screen, so
+        there it does nothing.  The hand's spot in the box keeps mapping the
+        same way, now onto the new screen."""
+        if self.layout.count < 2 or self.display_mode != DISPLAY_MODE_CURRENT:
+            return False
+        here = self.layout.screen_of(self.pointer.cursor_position() or self._raw_cursor())
+        index = self.layout.neighbor(here, direction)
+        if index is None:
+            return False
+        self.pointer.focus_display(index)
+        aim = self.pointer.target_pixel() or self.layout.center(index)
+        self._warp(aim)
+        print(f"pointer -> display {index + 1} of {self.layout.count}")
         return True
 
     def cursor_position(self):
@@ -988,8 +1042,8 @@ class Dispatcher:
         aim = self.pointer.target_pixel()
         if aim is None:
             return
-        want = self.layout.nearest(aim)
-        here = self.layout.nearest(self._raw_cursor())
+        want = self.layout.screen_of(aim)
+        here = self.layout.screen_of(self._raw_cursor())
         if want != here:
             self._warp(self.layout.center(want))
 
@@ -1001,6 +1055,8 @@ class Dispatcher:
             self.scroller.fling(n * SCROLL_PX_PER_PALM * FLING_GAIN * SCROLL_DIRECTION)
         elif name in ("pointer_move", "pointer_end", "click", "mouse_down", "mouse_up"):
             self.pointer.handle(name, n)
+        elif name == "display_step":
+            self.step_display(n)
         else:
             self.q.put((name, n))
 
@@ -1222,7 +1278,7 @@ class PointerAnimator:
             if self.mode == DISPLAY_MODE_ALL:
                 self.display = None
             elif self.display is None:
-                self.display = self.layout.nearest(self.pos or self.cursor_pos())
+                self.display = self.layout.screen_of(self.pos or self.cursor_pos())
             self.rect = self.layout.map_rect(self.mode, self.display)
             self._update_target()
 
@@ -1257,15 +1313,17 @@ class PointerAnimator:
             self.last_posted = self.pos
 
     def _update_target(self):
-        if self.target_n is None:
-            self.target = None
-        else:
-            self.target = dpy.normalized_to_rect(self.target_n, self.rect)
+        self.target = None if self.target_n is None else self._to_px(self.target_n)
 
     def _to_px(self, n):
         # The engine's 0..1 in the target rect, padded off the edges:
         # pyautogui's fail-safe trips on corners and the cursor should not
         # stick on a bezel.
+        if self.mode == DISPLAY_MODE_ALL and self.layout.count > 1:
+            # The box spans the desk as arranged in System Settings; points
+            # in the dead area next to a shorter screen slide onto its edge.
+            return dpy.clamp_to_nearest(dpy.normalized_to_point(n, self.rect),
+                                        self.layout.rects)
         return dpy.normalized_to_rect(n, self.rect)
 
     def handle(self, name, arg):
@@ -1274,7 +1332,7 @@ class PointerAnimator:
                 if self.target_n is None:
                     # Start of a gesture: whatever screen the cursor is on is
                     # the one this gesture belongs to.
-                    self.display = self.layout.nearest(self.cursor_pos())
+                    self.display = self.layout.screen_of(self.cursor_pos())
                     self.rect = self.layout.map_rect(self.mode, self.display)
                 self.target_n = (min(1.0, max(0.0, arg[0])),
                                  min(1.0, max(0.0, arg[1])))
@@ -1505,6 +1563,7 @@ HELP_LINES = (
 
 ACTION_LABELS = {
     "space_left": "SPACE <-", "space_right": "SPACE ->",
+    "display_step": "NEXT DISPLAY",
     "overview": "MISSION CONTROL", "app_windows": "APP WINDOWS",
     "close_overview": "CLOSE OVERVIEW", "back": "BACK", "forward": "FORWARD",
     "launcher": "SPOTLIGHT", "lock": "LOCK SCREEN", "volume_up": "VOLUME +", "volume_down": "VOLUME -",
