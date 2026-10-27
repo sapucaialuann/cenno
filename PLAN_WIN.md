@@ -32,8 +32,8 @@ The Windows port already works end to end (tray icon, gesture detection, Windows
 | Launch at login | `ServiceManagement` | Registry `HKCU\...\Run` | Done |
 | Permissions | Accessibility (AX) + Camera, with prompts + settings-pane links | Camera only (via Windows Settings); no programmatic check | Needs first-run camera guidance |
 | URL scheme | `cenno://on/off/toggle` (Apple events) | None | Missing |
-| Dark mode | `theme.py`, follows macOS appearance | None | Missing |
-| Reduce motion | Yes | No | Missing |
+| Dark mode | `theme.py`, follows macOS appearance | `theme.py`, follows the Windows apps theme (Light/Dark override) | Done |
+| Reduce motion | Yes | Yes (Windows animations setting) | Done |
 | Notifications | `rumps.notification` | None | Missing |
 | About dialog | `rumps.alert` (privacy + Ko-fi) | Menu item disabled | Missing |
 | Dictation | Wispr (bundle ID), Apple Dictation (AX), custom shortcut via Quartz | Wispr (tasklist), Win+H, custom via pyautogui | Mostly done; Wispr detection weaker |
@@ -171,6 +171,25 @@ Exit criteria: All gestures from the README work on Windows; README documents Wi
 
 ---
 
+### Phase 7 — Several displays & visual identity
+
+**Status: Complete**
+
+**Goal:** Bring the two-screen solution and the design system to Windows.
+
+Tasks:
+
+1. **Screen geometry (`displays.py`).** Port the macOS display module and make it cross-platform: the pure maths (union, clamp, nearest, next) stays the same, `quartz_displays()` stays macOS, `windows_displays()` reads the monitors from `user32` (`EnumDisplayMonitors` / `GetMonitorInfoW`), primary first, in virtual desktop coordinates. A monitor to the left of the main one has negative x, exactly like macOS.
+2. **Engine (`hand_desktop_switcher.py`).** The pointer keeps its 0..1 target and converts it against the display it belongs to, so one screen behaves pixel for pixel like before and several screens work: one screen (the one under the cursor, picked once per gesture) or the whole desk. The scroll thread asks the dispatcher to move the cursor to the aimed screen before the wheel goes out.
+3. **Tray menu.** A **Displays** submenu with *Current display*, *All displays* and *Move pointer to next display*. The menu is rebuilt after every action so the check marks follow the settings.
+4. **Preview window.** Follows the display layout: the corner is the primary screen, a dragged preview can live on any monitor and is clamped to the desktop.
+5. **Design system (`theme.py`).** `system_is_dark()` and `reduce_motion()` now work on Windows (registry + `SPI_GETCLIENTAREAANIMATION`), and the design fonts fall back to the Windows ones when they are not installed. The preview renders the same pills and colours as macOS, the panel is a rounded card, and the welcome / about windows use the same tokens.
+6. **Tests.** `tests/test_displays.py`, `tests/test_pointer_mapping.py` and `tests/test_windows_displays.py` (the last one asks the real `user32` for the monitors).
+
+Exit criteria: Two monitors are picked up automatically, the hand can reach the second one, the pointer never teleports when a monitor is plugged in, and the Windows app looks like the macOS one.
+
+---
+
 ## 4. Platform-difference decisions register
 
 | Decision | macOS | Windows | Rationale |
@@ -218,6 +237,8 @@ built, signed, or published).
 - [x] Notifications on camera error / first gesture (Phase 2)
 - [x] All README gestures verified on Windows — see `GESTURE_PARITY_WIN.md` (Phase 6, prepared)
 - [x] README has Windows install + differences section (Phase 6, prepared)
+- [x] Several displays: the hand reaches a second monitor, and the layout survives plugging one in (Phase 7)
+- [x] Visual identity: the same design tokens as macOS drive the preview, the panel and the dialogs (Phase 7)
 - [ ] First Windows release published (signed exe or installer) (Phase 5 — not shipped)
 
 ---

@@ -20,7 +20,6 @@ import threading
 import time
 import tkinter as tk
 import tkinter.simpledialog as simpledialog
-import tkinter.messagebox as messagebox
 import traceback
 import winreg
 import webbrowser
@@ -34,7 +33,9 @@ except Exception:  # pragma: no cover - pywin32 may not be installed
     win32gui = None
     win32con = None
 
+import displays as dpy
 import hand_desktop_switcher as core
+import theme
 
 APP_NAME = "Cenno"
 VERSION = "0.2.0"
@@ -66,6 +67,7 @@ DEFAULT_SETTINGS = {
     "wispr_shortcut": "",
     "first_run": True,
     "theme": "system",
+    "display_mode": "current",
 }
 
 DICTATION_MODES = (
@@ -73,6 +75,13 @@ DICTATION_MODES = (
     ("wispr",    "Wispr Flow"),
     ("winvoice", "Windows Voice Typing (Win+H)"),
     ("custom",   "Other app (custom shortcut)..."),
+)
+
+# Where the pointer box reaches: the screen the cursor is on, or every
+# screen at once.
+DISPLAY_MODES = (
+    ("current", "Current display"),
+    ("all",     "All displays"),
 )
 
 PREVIEW_W, PREVIEW_H = 280, 210        # current panel size; mutated by set_size()
@@ -93,37 +102,45 @@ CORNERS = (
 POINTER_EVENTS = ("pointer_move", "pointer_end", "click", "mouse_down", "mouse_up")
 STARTUP_REG_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 
-# ------------------------------------------------------------------
-# Preview theming (hardcoded Cenno colors; theme.py is macOS-only).
-# ------------------------------------------------------------------
 
-_PREVIEW_BG_DARK = "#1e1c17"     # paper-raised (dark)
-_PREVIEW_BG_LIGHT = "#ffffff"    # paper-raised (light)
-_PREVIEW_LINE_DARK = "#2e2b24"   # line (dark)
-_PREVIEW_LINE_LIGHT = "#d9d3c4"  # line (light)
+def gesture_lines():
+    """Menu list in the 'Gesture · Action' pattern, in Windows words."""
+    prev_dir, next_dir = ("right", "left") if core.NATURAL_SWIPE else ("left", "right")
+    return (f"Swipe {prev_dir} · Previous virtual desktop",
+            f"Swipe {next_dir} · Next virtual desktop",
+            "Swipe up · Task View",
+            "Swipe down · Show desktop",
+            "Two fingers move or flick · Scroll",
+            "Two fingers swipe · Back or forward",
+            "Point · Move cursor",
+            "Pinch while pointing · Click, twice to double click, hold to drag",
+            "OK sign and twist · Volume",
+            "Thumbs up, hold · Play or pause",
+            "Thumbs down, hold · Undo dictated text",
+            "Hang loose, hold · Dictation on or off",
+            "Open hand, gather fingertips · Start menu",
+            "Wave, open hand side to side · Lock screen",
+            "Rock horns, hold · Pause or resume gestures")
 
+# ------------------------------------------------------------------
+# Appearance.  The design tokens in theme.py are the only place the
+# colours live: Day (light) and Night (dark), picked from the Windows
+# apps theme unless the user overrides them in the tray menu.
+# ------------------------------------------------------------------
 
 def detect_windows_theme():
     """Return "dark" or "light" from the Windows AppsUseLightTheme setting."""
-    try:
-        with winreg.OpenKey(winreg.HKEY_CURRENT_USER,
-                            r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize") as key:
-            val, _ = winreg.QueryValueEx(key, "AppsUseLightTheme")
-            return "light" if int(val) == 1 else "dark"
-    except Exception:
-        return "dark"   # cannot detect -> default dark
+    return "dark" if theme.system_is_dark() else "light"
 
 
 def system_is_dark():
-    """True when Windows is using a dark apps theme. Defaults to dark."""
-    return detect_windows_theme() == "dark"
+    """True when Windows is using a dark apps theme."""
+    return theme.system_is_dark()
 
 
 def preview_colors(dark):
     """Return (panel background, border) hex for the given theme."""
-    if dark:
-        return _PREVIEW_BG_DARK, _PREVIEW_LINE_DARK
-    return _PREVIEW_BG_LIGHT, _PREVIEW_LINE_LIGHT
+    return theme.hex_of("paper-sunk", dark), theme.hex_of("line", dark)
 
 
 # =============================================================================
@@ -151,6 +168,8 @@ def load_settings():
     # Remap Mac-only dictation modes to the Windows default.
     if s["dictation"] not in ("auto", "wispr", "winvoice", "custom"):
         s["dictation"] = DEFAULT_SETTINGS["dictation"]
+    if s.get("display_mode") not in ("current", "all"):
+        s["display_mode"] = DEFAULT_SETTINGS["display_mode"]
     return s
 
 
@@ -232,6 +251,80 @@ def handle_cenno_url(url):
 
 
 # =============================================================================
+# Dialogs (tkinter - main thread only)
+# =============================================================================
+
+def show_dialog(root, title, body, dark=True, action=None, action_label="OK"):
+    """A small window in the Cenno design: paper background, ink text, a
+    trace-coloured action button.  Blocks until it is closed."""
+    paper = theme.hex_of("paper", dark)
+    win = tk.Toplevel(root)
+    win.title(title)
+    win.configure(bg=paper)
+    win.resizable(False, False)
+    # No transient() here: the main window is withdrawn, and a transient
+    # window of a withdrawn window never gets mapped on Windows.
+
+    inner = tk.Frame(win, bg=paper)
+    inner.pack(fill=tk.BOTH, expand=True,
+               padx=theme.SPACE[6], pady=theme.SPACE[4])
+
+    tk.Label(inner, text=title, bg=paper, fg=theme.hex_of("ink", dark),
+             font=theme.type_font("display", "title"),
+             justify="left", anchor="w").pack(fill=tk.X)
+    tk.Label(inner, text=body, bg=paper, fg=theme.hex_of("ink-muted", dark),
+             font=theme.type_font("sans", "body-sm"),
+             justify="left", anchor="w").pack(fill=tk.X, pady=theme.SPACE[2])
+
+    def close():
+        try:
+            win.grab_release()
+        except Exception:
+            pass
+        win.destroy()
+
+    def on_action():
+        close()
+        if action:
+            action()
+
+    tk.Button(inner, text=action_label, command=on_action,
+              bg=theme.hex_of("trace", dark),
+              fg=theme.hex_of("on-trace", dark),
+              activebackground=theme.hex_of("trace-soft", dark),
+              activeforeground=theme.hex_of("on-trace", dark),
+              font=theme.type_font("sans", "label"),
+              relief=tk.FLAT, bd=0, padx=theme.SPACE[4], pady=theme.SPACE[2],
+              cursor="hand2").pack(anchor="e", pady=(theme.SPACE[3], 0))
+
+    win.protocol("WM_DELETE_WINDOW", close)
+    win.update_idletasks()
+    # Always on top: the app has no other window, so the dialog would
+    # otherwise open behind whatever the user was doing.
+    try:
+        win.attributes("-topmost", True)
+    except Exception:
+        pass
+    # Centre it on the primary screen.
+    try:
+        lay = dpy.system_displays()
+        rect = lay[0] if lay else (0, 0, win.winfo_screenwidth(),
+                                   win.winfo_screenheight())
+        x = int(rect[0] + (rect[2] - win.winfo_width()) / 2)
+        y = int(rect[1] + (rect[3] - win.winfo_height()) / 2)
+        win.geometry(f"+{x}+{y}")
+    except Exception:
+        pass
+    try:
+        win.grab_set()
+        win.lift()
+        win.focus_force()
+    except Exception:
+        pass
+    root.wait_window(win)
+
+
+# =============================================================================
 # Camera / gesture thread
 # =============================================================================
 
@@ -247,10 +340,24 @@ class Tracker(threading.Thread):
         self.status = "Starting camera..."
         self.last_action, self.last_action_time = "", -1e9
         self.fps = 0.0
+        self.dark = True            # set from the main thread (tick)
+        self.reduce_motion = False
 
     def set_paused(self, paused):
         self.engine.paused = paused
         self.dispatcher.submit("pointer_end", None)
+
+    # --- screens ---
+
+    @property
+    def displays_count(self):
+        """How many screens Windows reports right now."""
+        return self.dispatcher.layout.count
+
+    def refresh_displays(self):
+        """Re-read the screen layout.  True when it changed (a display was
+        plugged in, unplugged or moved)."""
+        return self.dispatcher.refresh_displays()
 
     def run(self):
         try:
@@ -341,8 +448,12 @@ class Tracker(threading.Thread):
                     print(f"-> {label}")
 
                 pose = self.engine.pose
-                state = "Paused" if self.engine.paused else "Active"
-                self.status = f"{state}: {pose if pose != 'none' else 'no hand'}"
+                if self.engine.paused:
+                    self.status = "Paused"
+                elif pose == "none":
+                    self.status = "No hand"
+                else:
+                    self.status = f"Tracking · {pose}"
 
                 frames += 1
                 if now - fps_t0 >= 1.0:
@@ -359,34 +470,76 @@ class Tracker(threading.Thread):
             hands.close()
 
     def _make_preview(self, cv2, drawing, mp_hands, frame, hl, now):
+        """Small preview with status pills, encoded as JPEG for the panel.
+
+        Same design as the macOS preview: the landmarks and the pointer box
+        are drawn in the theme colours, and the state sits in pills instead
+        of loose text."""
+        dark = self.dark
+        col = lambda name: theme.bgr(name, dark)
         h, w = frame.shape[:2]
         if hl is not None:
-            drawing.draw_landmarks(frame, hl, mp_hands.HAND_CONNECTIONS)
+            drawing.draw_landmarks(
+                frame, hl, mp_hands.HAND_CONNECTIONS,
+                drawing.DrawingSpec(color=col("trace"), thickness=2, circle_radius=2),
+                drawing.DrawingSpec(color=col("ink"), thickness=1))
             if self.engine.pose == "point" and self.settings["mouse"]:
                 x0, y0, x1, y1 = core.POINTER_BOX
-                cv2.rectangle(frame,
-                              (int(x0 * w), int(y0 * h)),
-                              (int(x1 * w), int(y1 * h)), (0, 255, 255), 2)
+                box = col("ember") if self.engine.pinched else col("trace")
+                cv2.rectangle(frame, (int(x0 * w), int(y0 * h)),
+                              (int(x1 * w), int(y1 * h)), box, 2)
+        # Render at 2x the panel size so it stays sharp on scaled screens.
         small = cv2.resize(frame, (PREVIEW_W * 2, PREVIEW_H * 2),
                            interpolation=cv2.INTER_AREA)
         sh, sw = small.shape[:2]
         font = cv2.FONT_HERSHEY_SIMPLEX
+        s2 = 2                                   # token px -> render px
 
-        def text(s, x, y, scale, color, thick):
-            cv2.putText(small, s, (x + 2, y + 2), font, scale,
-                        (0, 0, 0), thick, cv2.LINE_AA)
-            cv2.putText(small, s, (x, y), font, scale, color, thick, cv2.LINE_AA)
+        def pill(x, y, label, fill, ink, outline=None):
+            """Label-style pill (uppercase, radius-pill). Returns its width."""
+            scale, thick = 0.62, 2
+            (tw, th), _ = cv2.getTextSize(label, font, scale, thick)
+            px, py = theme.SPACE[3] * s2, theme.SPACE[1] * s2
+            wd, ht = tw + 2 * px, th + 2 * py
 
-        paused = self.engine.paused
-        pose = self.engine.pose if self.engine.pose != "none" else "no hand"
-        text("PAUSED" if paused else pose, 16, 38, 0.9,
-             (80, 80, 255) if paused else (255, 255, 255), 2)
-        if now - self.last_action_time < core.ACTION_FLASH_SECONDS:
-            (tw, _), _ = cv2.getTextSize(self.last_action, font, 1.1, 3)
-            text(self.last_action, max(10, (sw - tw) // 2), sh - 24,
-                 1.1, (90, 255, 90), 3)
-        if paused:
-            cv2.rectangle(small, (0, 0), (sw - 1, sh - 1), (80, 80, 255), 6)
+            def shape(c, inset=0):
+                r = ht // 2 - inset
+                x0, x1, cy = x + inset + r, x + wd - inset - r, y + ht // 2
+                cv2.circle(small, (x0, cy), r, c, -1, cv2.LINE_AA)
+                cv2.circle(small, (x1, cy), r, c, -1, cv2.LINE_AA)
+                cv2.rectangle(small, (x0, cy - r), (x1, cy + r), c, -1)
+
+            if outline is not None:
+                shape(outline)
+                shape(fill, inset=2)
+            else:
+                shape(fill)
+            cv2.putText(small, label, (x + px, y + py + th), font, scale, ink, thick,
+                        cv2.LINE_AA)
+            return wd
+
+        gap = theme.SPACE[2] * s2
+        x0 = y0 = theme.SPACE[3] * s2
+        pose = self.engine.pose
+        if self.engine.paused:
+            pill(x0, y0, "PAUSED", col("paper-raised"), col("ink"), col("line-strong"))
+        elif pose == "none":
+            pill(x0, y0, "NO HAND", col("paper-raised"), col("ember-ink"), col("line-strong"))
+        else:
+            wd = pill(x0, y0, "TRACKING", col("trace"), col("on-trace"))
+            pill(x0 + wd + gap, y0, pose.upper(), col("paper-raised"), col("ink"),
+                 col("line-strong"))
+
+        age = now - self.last_action_time
+        if age < core.ACTION_FLASH_SECONDS:
+            label = self.last_action.upper()
+            (tw, th), _ = cv2.getTextSize(label, font, 0.62, 2)
+            wd = tw + 2 * theme.SPACE[3] * s2
+            ht = th + 2 * theme.SPACE[1] * s2
+            flash = age < theme.FLASH_S and not self.reduce_motion
+            pill((sw - wd) // 2, sh - theme.SPACE[3] * s2 - ht, label,
+                 col("trace-soft") if flash else col("paper-raised"),
+                 col("ink"), col("line-strong"))     # ink, not on-trace: Night trace-soft is dark
         ok, jpg = cv2.imencode(".jpg", small, [cv2.IMWRITE_JPEG_QUALITY, 80])
         return jpg.tobytes() if ok else None
 
@@ -397,15 +550,22 @@ class Tracker(threading.Thread):
 
 class TkPreview:
     """Borderless, always-on-top floating window: a screen corner (click-through)
-    or free/draggable (position remembered across restarts)."""
+    or free/draggable (position remembered across restarts).
 
-    def __init__(self, root, corner="top_right", size=None, pos=None, dark=True):
+    It follows the design system: the panel is a card with rounded corners in
+    the theme colours, and it knows about every screen, so it can be parked on
+    a second monitor."""
+
+    def __init__(self, root, corner="top_right", size=None, pos=None, dark=True,
+                 layout=None):
         self.root = root
         self.corner = corner
         self.free = corner == "free"
         self.w, self.h = size or (PREVIEW_W, PREVIEW_H)
         self.pos = tuple(pos) if pos else None
         self.dark = dark
+        self.layout = layout or (lambda: None)
+        self._jpeg = None
         bg, border = preview_colors(dark)
 
         self.win = tk.Toplevel(root)
@@ -434,22 +594,46 @@ class TkPreview:
 
     # -- positioning -------------------------------------------------
 
+    def _layout(self):
+        """The current display layout, or None when it cannot be read."""
+        try:
+            return self.layout()
+        except Exception:
+            return None
+
+    def _primary_rect(self):
+        """The primary screen (the one with the taskbar)."""
+        lay = self._layout()
+        if lay is not None and lay.count:
+            return lay.rect(lay.primary)
+        return (0.0, 0.0, float(self.win.winfo_screenwidth()),
+                float(self.win.winfo_screenheight()))
+
+    def _desktop_rect(self):
+        """Every screen as one rect, so the preview can sit on any of them."""
+        lay = self._layout()
+        if lay is not None and lay.count:
+            return lay.union
+        desk = dpy.windows_virtual_screen()
+        if desk:
+            return desk
+        return (0.0, 0.0, float(self.win.winfo_screenwidth()),
+                float(self.win.winfo_screenheight()))
+
     def _corner_origin(self):
-        sw = self.win.winfo_screenwidth()
-        sh = self.win.winfo_screenheight()
+        sx, sy, sw, sh = self._primary_rect()
         left = self.corner.endswith("left")
         top = self.corner.startswith("top")
-        x = PREVIEW_MARGIN if left else sw - self.w - PREVIEW_MARGIN
+        x = sx + (PREVIEW_MARGIN if left else sw - self.w - PREVIEW_MARGIN)
         # Extra bottom margin to clear the taskbar (typically ~48 px).
-        y = PREVIEW_MARGIN if top else sh - self.h - PREVIEW_MARGIN * 5
+        y = sy + (PREVIEW_MARGIN if top else sh - self.h - PREVIEW_MARGIN * 5)
         return x, y
 
     def _clamp(self, x, y):
-        """Keep the preview on the primary monitor."""
-        sw = self.win.winfo_screenwidth()
-        sh = self.win.winfo_screenheight()
-        x = max(0, min(x, sw - self.w))
-        y = max(0, min(y, sh - self.h))
+        """Keep the preview on the desktop (any of the screens)."""
+        dx, dy, dw, dh = self._desktop_rect()
+        x = max(dx, min(x, dx + dw - self.w))
+        y = max(dy, min(y, dy + dh - self.h))
         return x, y
 
     def place(self):
@@ -461,7 +645,7 @@ class TkPreview:
             x, y = self._corner_origin()
             self.pos = (x, y)
         x, y = self._clamp(x, y)
-        self.win.geometry(f"{self.w}x{self.h}+{x}+{y}")
+        self.win.geometry(f"{self.w}x{self.h}+{int(x)}+{int(y)}")
 
     def origin(self):
         return (self.win.winfo_x(), self.win.winfo_y())
@@ -505,7 +689,7 @@ class TkPreview:
         dy = event.y_root - self._drag_start[1]
         x, y = self._drag_origin
         x, y = self._clamp(x + dx, y + dy)
-        self.win.geometry(f"+{x}+{y}")
+        self.win.geometry(f"+{int(x)}+{int(y)}")
         self.pos = (x, y)
 
     def _on_release(self, event):
@@ -524,7 +708,7 @@ class TkPreview:
         self.w, self.h = w, h
         global PREVIEW_W, PREVIEW_H
         PREVIEW_W, PREVIEW_H = w, h
-        self.win.geometry(f"{w}x{h}+{x}+{y}")
+        self.win.geometry(f"{w}x{h}+{int(x)}+{int(y)}")
         self.pos = (x, y)
 
     def set_corner(self, corner):
@@ -539,6 +723,7 @@ class TkPreview:
         self.win.configure(bg=border)
         self.container.configure(bg=bg)
         self.label.configure(bg=bg)
+        self._render()
 
     # -- visibility / image ------------------------------------------
 
@@ -555,10 +740,24 @@ class TkPreview:
             self.visible = False
 
     def set_jpeg(self, data):
-        from PIL import Image, ImageTk
-        img = Image.open(io.BytesIO(data)).resize(
+        self._jpeg = data
+        self._render()
+
+    def _render(self):
+        """Draw the camera frame as a card: rounded corners in the theme
+        colours, like the macOS preview panel."""
+        if not self._jpeg:
+            return
+        from PIL import Image, ImageDraw, ImageTk
+        img = Image.open(io.BytesIO(self._jpeg)).convert("RGB").resize(
             (self.w, self.h), Image.LANCZOS)
-        self._photo = ImageTk.PhotoImage(img)
+        mask = Image.new("L", img.size, 0)
+        ImageDraw.Draw(mask).rounded_rectangle(
+            [0, 0, img.size[0] - 1, img.size[1] - 1],
+            radius=theme.RADIUS_MD, fill=255)
+        card = Image.new("RGB", img.size, theme.rgb("paper-sunk", self.dark))
+        card.paste(img, (0, 0), mask)
+        self._photo = ImageTk.PhotoImage(card)
         self.label.configure(image=self._photo)
 
 
@@ -638,20 +837,24 @@ class CennoApp:
         def on_toggle_enabled(icon, item):
             app._set_enabled(not app.settings["enabled"])
             app._update_icon_state()
+            app._sync_menu()
 
         def on_toggle_pause(icon, item):
             app.tracker.set_paused(not app.tracker.engine.paused)
             app._update_icon_state()
+            app._sync_menu()
 
         def on_toggle_preview(icon, item):
             app.settings["preview"] = not app.settings["preview"]
             save_settings(app.settings)
+            app._sync_menu()
 
         def on_toggle_mouse(icon, item):
             app.settings["mouse"] = not app.settings["mouse"]
             if not app.settings["mouse"]:
                 app.tracker.dispatcher.submit("pointer_end", None)
             save_settings(app.settings)
+            app._sync_menu()
 
         def on_toggle_startup(icon, item):
             set_startup(not startup_enabled())
@@ -665,6 +868,7 @@ class CennoApp:
                 save_settings(app.settings)
                 if app.preview and app.root:
                     app.root.after(0, lambda: app.preview.set_corner(key))
+                app._sync_menu()
             return cb
 
         def make_size_cb(key):
@@ -673,6 +877,7 @@ class CennoApp:
                 save_settings(app.settings)
                 if app.preview and app.root:
                     app.root.after(0, lambda: app.preview.set_size(key))
+                app._sync_menu()
             return cb
 
         def make_dictation_cb(key):
@@ -690,16 +895,30 @@ class CennoApp:
                     app.settings["dictation"] = key
                     save_settings(app.settings)
                     app._sync_dictation()
+                app._sync_menu()
             return cb
 
-        def make_theme_cb(theme):
+        def make_theme_cb(theme_name):
             def cb(icon, item):
-                app.settings["theme"] = theme
+                app.settings["theme"] = theme_name
                 save_settings(app.settings)
                 app.dark = app._effective_dark()
                 if app.preview and app.root:
                     app.root.after(0, lambda: app.preview.apply_theme(app.dark))
+                app._sync_menu()
             return cb
+
+        def make_display_mode_cb(key):
+            def cb(icon, item):
+                app.settings["display_mode"] = key
+                save_settings(app.settings)
+                app.tracker.dispatcher.set_display_mode(key)
+                app._sync_menu()
+            return cb
+
+        def on_next_display(icon, item):
+            if not app.tracker.dispatcher.jump_to_next_display():
+                app._notify(APP_NAME, "Only one display is connected.")
 
         def on_open_log(icon, item):
             try:
@@ -727,10 +946,13 @@ class CennoApp:
 
         def on_about(icon, item):
             if app.root:
-                app.root.after(0, lambda: messagebox.showinfo(
-                    f"About {APP_NAME} {VERSION}",
+                app.root.after(0, lambda: show_dialog(
+                    app.root,
+                    f"{APP_NAME} {VERSION}",
                     f"{PRIVACY_LINE}\n\n{SUPPORT_LINE}\n\n{SUPPORT_URL}",
-                    parent=app.root,
+                    dark=app.dark,
+                    action=lambda: webbrowser.open(SUPPORT_URL),
+                    action_label="Support on Ko-fi",
                 ))
 
         corner_items = [
@@ -757,8 +979,14 @@ class CennoApp:
                      radio=True)
             for key, label in (("system", "System"), ("light", "Light"), ("dark", "Dark"))
         ]
+        display_items = [
+            MenuItem(label, make_display_mode_cb(key),
+                     checked=lambda item, k=key: app.settings.get("display_mode", "current") == k,
+                     radio=True)
+            for key, label in DISPLAY_MODES
+        ]
         gesture_items = [MenuItem(line, None, enabled=False)
-                         for line in core.HELP_LINES]
+                         for line in gesture_lines()]
 
         menu = Menu(
             MenuItem(lambda item: app.tracker.status, None, enabled=False),
@@ -781,6 +1009,11 @@ class CennoApp:
             MenuItem("Mouse control (point + pinch)",
                      on_toggle_mouse,
                      checked=lambda item: app.settings["mouse"]),
+            MenuItem("Displays", Menu(
+                *display_items,
+                Menu.SEPARATOR,
+                MenuItem("Move pointer to next display", on_next_display),
+            )),
             MenuItem("Dictation (hang loose)", Menu(*dictation_items)),
             MenuItem("Theme", Menu(*theme_items)),
             Menu.SEPARATOR,
@@ -829,14 +1062,17 @@ class CennoApp:
         prev = self._icon_state_cur
         self._icon_state_cur = state
         base = self._icon_base
+        # The tints follow the Windows taskbar, so they follow the system
+        # theme and not the theme the preview uses.
+        system_dark = theme.system_is_dark()
         if state == "default":
             img = base
         elif state == "paused":
-            img = self._tint_icon(base, (150, 150, 150), 0.45)
+            img = self._tint_icon(base, theme.rgb("ink-muted", system_dark), 0.45)
         elif state == "off":
-            img = self._tint_icon(base, (60, 60, 60), 0.55)
+            img = self._tint_icon(base, theme.rgb("ink", system_dark), 0.45)
         else:  # camera
-            img = self._tint_icon(base, (220, 60, 60), 0.45)
+            img = self._tint_icon(base, theme.rgb("danger", system_dark), 0.45)
         try:
             self.icon.icon = img
         except Exception:
@@ -857,6 +1093,18 @@ class CennoApp:
             print(f"[notify] {title}: {msg}")
         except Exception:
             pass
+
+    def _sync_menu(self):
+        """Rebuild the tray menu so its check marks match the settings.
+
+        Called from the tray thread, after the menu has closed: rebuilding a
+        menu that is open is not safe."""
+        if not self.icon:
+            return
+        try:
+            self.icon.update_menu()
+        except Exception as exc:
+            print(f"WARN: could not refresh the tray menu: {exc}")
 
     def _ask_wispr_shortcut(self):
         current = self.settings.get("wispr_shortcut", "")
@@ -892,16 +1140,17 @@ class CennoApp:
 
     def _show_welcome(self):
         """One-time first-run welcome dialog with camera permission guidance."""
-        messagebox.showinfo(
-            f"Welcome to {APP_NAME} {VERSION}",
+        show_dialog(
+            self.root,
+            f"Welcome to {APP_NAME}",
             "Cenno needs access to your webcam to track hand gestures.\n\n"
             "1. Open Windows Settings > Privacy & security > Camera\n"
             "   and make sure camera access is allowed.\n"
             "2. You can also jump there from the tray icon: "
             "\"Open Camera settings\".\n\n"
             "No Accessibility permission is needed on Windows. Gestures work\n"
-            "right away once the camera is allowed.\n",
-            parent=self.root,
+            "right away once the camera is allowed.",
+            dark=self.dark,
         )
         self.settings["first_run"] = False
         save_settings(self.settings)
@@ -930,9 +1179,12 @@ class CennoApp:
             if self._theme_tick >= 150:  # ~5 s at 33 ms
                 self._theme_tick = 0
                 dark = self._effective_dark()
-                if dark != self.dark and self.preview is not None:
+                self.tracker.reduce_motion = theme.reduce_motion()
+                if dark != self.dark:
                     self.dark = dark
-                    self.preview.apply_theme(dark)
+                    self.tracker.dark = dark
+                    if self.preview is not None:
+                        self.preview.apply_theme(dark)
         except Exception as exc:
             print(f"WARN: preview tick: {exc}")
         self.root.after(33, self._tick_preview)   # ~30 fps
@@ -964,6 +1216,12 @@ class CennoApp:
             if self.icon:
                 self.icon.title = f"{APP_NAME}: {self.tracker.status}"
             self._update_icon_state()
+            # 4 Hz is enough to notice a screen being plugged in, unplugged or
+            # dragged to another spot, and cheap enough to leave running.
+            if self.tracker.refresh_displays() and self.preview is not None:
+                # A screen came or went: keep the preview where it is, but
+                # make sure it is still on a screen that exists.
+                self.preview.place()
             if (
                 self.tracker.last_action
                 and not self._gesture_notified
@@ -989,10 +1247,10 @@ class CennoApp:
             self.root.after(200, self.root.destroy)
 
     def run(self):
-        if getattr(sys, "frozen", False):
-            setup_logging()
-
         self._sync_dictation()
+        # Where the hand reaches: one screen or every screen.
+        self.tracker.dispatcher.set_display_mode(
+            self.settings.get("display_mode", core.DISPLAY_MODE_CURRENT))
         self.tracker.start()
 
         self.root = tk.Tk()
@@ -1003,12 +1261,16 @@ class CennoApp:
 
         # Effective preview theme from settings["theme"] (system|light|dark).
         self.dark = self._effective_dark()
+        self.tracker.dark = self.dark
+        self.tracker.reduce_motion = theme.reduce_motion()
+        theme.installed_families()      # warm the font cache for the dialogs
         try:
             size = self._preview_size()
             pos = (self.settings.get("preview_pos")
                    if self.settings["preview_corner"] == "free" else None)
             self.preview = TkPreview(self.root, self.settings["preview_corner"],
-                                     size=size, pos=pos, dark=self.dark)
+                                     size=size, pos=pos, dark=self.dark,
+                                     layout=lambda: self.tracker.dispatcher.layout)
         except Exception:
             print("WARN: preview unavailable:\n" + traceback.format_exc())
             self.settings["preview"] = False
@@ -1036,6 +1298,11 @@ def main():
         print("Run: pip install pystray Pillow")
         sys.exit(1)
 
+    # Send the prints to the log file first: an app has no Terminal, and the
+    # engine says what it is doing (screens, gestures) from the start.
+    if getattr(sys, "frozen", False):
+        setup_logging()
+
     app = CennoApp()
 
     # Launched via the cenno:// protocol: apply on/off/toggle and exit.
@@ -1043,8 +1310,6 @@ def main():
     if len(sys.argv) > 1:
         action = handle_cenno_url(sys.argv[1])
         if action in ("on", "off", "toggle"):
-            if getattr(sys, "frozen", False):
-                setup_logging()
             if action == "toggle":
                 app._set_enabled(not app.settings["enabled"])
             else:
