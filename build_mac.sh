@@ -2,7 +2,7 @@
 # Builds dist/Cenno.app and dist/Cenno-<version>.dmg on an Apple Silicon Mac.
 set -euo pipefail
 cd "$(dirname "$0")"
-VERSION=$(grep -E '^VERSION = ' Cenno.spec | cut -d'"' -f2)
+VERSION=$(grep -E '^[0-9]+\.[0-9]+\.[0-9]+' VERSION | head -1)
 VENV=.venv-build
 
 if [ ! -x "$VENV/bin/python" ]; then

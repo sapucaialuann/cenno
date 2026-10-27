@@ -62,10 +62,20 @@ Voice Control > Commands > +): phrase "Cenno on", action **Open URL**,
 
 ## Install (Windows)
 
-1. Download `Cenno-<version>.exe` (or the installer) from the Releases page and run it.
-2. Cenno lives in the system tray (hand icon): on/off, pause, camera preview on/off and corner position, mouse control on/off, displays, open at startup, gesture list.
-3. Allow **Camera** when Windows asks (Settings > Privacy & security > Camera). Cenno needs no Accessibility permission on Windows.
-4. If the camera isn't detected, open Camera settings from the tray menu.
+1. Download `Cenno-<version>-Setup.exe` from the Releases page and double-click it.
+2. The installer walks you through it: it shows its progress, lets you pick
+   where to install, and puts **Cenno** on your desktop and in the Start Menu
+   when it is done. If Windows asks whether to install for just you or for
+   everyone, "just me" is fine and needs no administrator password.
+3. Cenno lives in the system tray (hand icon): on/off, pause, camera preview on/off and corner position, mouse control on/off, displays, open at startup, gesture list.
+4. Allow **Camera** when Windows asks (Settings > Privacy & security > Camera). Cenno needs no Accessibility permission on Windows.
+5. If the camera isn't detected, open Camera settings from the tray menu.
+
+To remove Cenno: Settings > Apps > Installed apps > Cenno > Uninstall.
+
+You do not need to install anything else: no Python, no pip, no OpenCV, no
+Visual C++ redistributable. The installer ships the runtime and every library
+inside the app folder.
 
 ## Several displays (Windows)
 
@@ -93,11 +103,14 @@ The Windows app uses the same design system as the macOS one (`theme.py`), so bo
     pip install "mediapipe==0.10.9" opencv-python pyautogui pystray Pillow
     python cenno_app_win.py
 
-To build the exe:
+To build the exe and the installer:
 
     build_win.bat
 
-This produces `dist\Cenno\Cenno.exe`.
+This produces `dist\Cenno\Cenno.exe` and `dist\Cenno-<version>-Setup.exe`, the
+installer people download. It needs [Inno Setup 6](https://jrsoftware.org/isdl.php)
+(free): `winget install JRSoftware.InnoSetup`. `build_win.bat exe-only` builds
+just the exe. See `INSTALLER_NOTES.md` for signing and releasing.
 
 Run the tests:
 
@@ -150,7 +163,9 @@ Cenno on Windows is intentionally Windows-native rather than a macOS clone:
 - `theme.py`: design tokens (colour, type, space, radius, motion) for Day and Night, shared with macOS.
 - `displays.py`: screen geometry for macOS (Quartz) and Windows (user32).
 - `tests/`: `python tests/test_displays.py`, `python tests/test_pointer_mapping.py`, `python tests/test_dispatcher_displays.py` and `python tests/test_windows_displays.py`.
-- `build_win.bat`, `Cenno_win.spec`, `requirements-build-win.txt`: build the exe (`build_win.bat`).
+- `build_win.bat`, `Cenno_win.spec`, `requirements-build-win.txt`: build the exe and the installer (`build_win.bat`).
+- `installer/cenno.iss`: the Windows installer (Inno Setup 6).
+- `VERSION`: the version, in one place. The exe, the installer and the DMG all read it.
 
 ## Support
 

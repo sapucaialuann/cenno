@@ -140,16 +140,16 @@ Exit criteria: Dark mode follows Windows; `cenno://on` toggles Cenno from outsid
 
 ### Phase 5 — Build, signing & release
 
-**Status: Prepared, not shipped**
+**Status: Installer built and verified. Not signed, not published.**
 
 **Goal:** Ship a trustworthy Windows release.
 
 Tasks:
-1. Clean `build_win.bat` so `dist/Cenno/Cenno.exe` is the output; remove stale `dist/newMotion`.
-2. Add an Inno Setup or NSIS installer (or ship a zip of `dist/Cenno` plus a README). The installer should create a Start Menu shortcut and optionally the registry Run entry.
-3. Code-sign the `.exe` (and installer) with a Windows code-signing certificate so SmartScreen doesn't flag it. Ad-hoc self-sign for internal testing; real cert for public releases.
-4. Add version resource to the exe (`version=VERSION` in the spec, or a `version.txt` + `PyInstaller` `version` param) so file properties show 0.2.0.
-5. GitHub Actions (optional): Windows build matrix on push/tag, upload `.exe` as a release asset.
+1. [x] Clean `build_win.bat` so `dist/Cenno/Cenno.exe` is the output; remove stale `dist/newMotion`.
+2. [x] Inno Setup installer (`installer/cenno.iss`): progress bar, destination folder page, desktop + Start Menu shortcuts, uninstaller in Settings > Apps, `cenno://` handler registered at install time. `build_win.bat` compiles it to `dist/Cenno-<version>-Setup.exe`.
+3. [ ] Code-sign the `.exe` (and installer) with a Windows code-signing certificate so SmartScreen doesn't flag it. Ad-hoc self-sign for internal testing; real cert for public releases. `installer/make_test_cert.ps1` covers the test case.
+4. [x] Version resource on the exe (`version.txt` is generated from the `VERSION` file, so the exe, the installer and the DMG cannot disagree).
+5. [ ] GitHub Actions (optional): Windows build matrix on push/tag, upload the setup `.exe` as a release asset.
 
 Exit criteria: `build_win.bat` produces a signed `Cenno.exe`; installer installs and launches; SmartScreen shows "Verified publisher" (after real cert).
 
@@ -239,7 +239,8 @@ built, signed, or published).
 - [x] README has Windows install + differences section (Phase 6, prepared)
 - [x] Several displays: the hand reaches a second monitor, and the layout survives plugging one in (Phase 7)
 - [x] Visual identity: the same design tokens as macOS drive the preview, the panel and the dialogs (Phase 7)
-- [ ] First Windows release published (signed exe or installer) (Phase 5 — not shipped)
+- [x] Windows installer built and verified: installs, launches, creates the desktop + Start Menu shortcuts, uninstalls cleanly (Phase 5)
+- [ ] First Windows release published (signed installer) (Phase 5 — not shipped)
 
 ---
 

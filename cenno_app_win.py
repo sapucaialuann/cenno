@@ -221,6 +221,7 @@ def set_startup(enable):
 # ------------------------------------------------------------------
 
 CENNO_PROTOCOL_KEY = r"Software\Classes\cenno\shell\open\command"
+CENNO_PROTOCOL_ROOT = r"Software\Classes\cenno"
 
 
 def register_cenno_protocol():
@@ -228,6 +229,10 @@ def register_cenno_protocol():
     try:
         with winreg.CreateKey(winreg.HKEY_CURRENT_USER, CENNO_PROTOCOL_KEY) as k:
             winreg.SetValueEx(k, "", 0, winreg.REG_SZ, f"{_exe_path()} \"%1\"")
+        # Windows only treats a scheme as a link handler when "URL Protocol" is
+        # set on it, so write it next to the command.
+        with winreg.CreateKey(winreg.HKEY_CURRENT_USER, CENNO_PROTOCOL_ROOT) as k:
+            winreg.SetValueEx(k, "URL Protocol", 0, winreg.REG_SZ, "")
     except Exception as exc:
         print(f"WARN: register_cenno_protocol failed: {exc}")
 
