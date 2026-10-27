@@ -3,6 +3,9 @@ setlocal
 cd /d "%~dp0"
 
 set VENV=.venv-build-win
+set VERSION=0.2.0
+
+echo == building Cenno v%VERSION%
 
 if not exist "%VENV%\Scripts\python.exe" (
     python -m venv "%VENV%"
@@ -16,6 +19,9 @@ echo == icon
 if errorlevel 1 (
     echo WARNING: Could not create icon.ico, building without it.
 )
+
+echo == clean dist
+if exist "dist" rmdir /s /q "dist"
 
 echo == exe
 "%VENV%\Scripts\pyinstaller" --noconfirm --clean --log-level WARN Cenno_win.spec

@@ -1,0 +1,31 @@
+# PyInstaller version resource for Cenno.exe (v0.2.0)
+# Evaluated by PyInstaller's versioninfo loader; see Cenno_win.spec EXE(version="version.txt")
+
+VSVersionInfo(
+  ffi=FixedFileInfo(
+    filevers=(0, 2, 0, 0),
+    prodvers=(0, 2, 0, 0),
+    mask=0x3f,
+    flags=0x0,
+    OS=0x40004,
+    fileType=0x1,
+    subtype=0x0,
+    date=(0, 0)
+  ),
+  kids=[
+    StringFileInfo(
+      [
+      StringTable(
+        u'040904B0',
+        [StringStruct(u'CompanyName', u'Luann Sapucaia / Cenno'),
+        StringStruct(u'FileDescription', u'Cenno — hand gesture control for Windows'),
+        StringStruct(u'FileVersion', u'0.2.0'),
+        StringStruct(u'InternalName', u'Cenno'),
+        StringStruct(u'LegalCopyright', u'Copyright © 2026 Luann Sapucaia'),
+        StringStruct(u'OriginalFilename', u'Cenno.exe'),
+        StringStruct(u'ProductName', u'Cenno'),
+        StringStruct(u'ProductVersion', u'0.2.0')])
+      ]),
+    VarFileInfo([VarStruct(u'Translation', [1033, 1200])])
+  ]
+)

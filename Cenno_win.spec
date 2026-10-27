@@ -37,5 +37,6 @@ exe = EXE(
     name="Cenno",
     console=False,
     icon=_icon,
+    version="version.txt",
 )
 coll = COLLECT(exe, a.binaries, a.datas, name="Cenno")
