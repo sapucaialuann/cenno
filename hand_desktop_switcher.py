@@ -1,6 +1,9 @@
 """
 Cenno: hand-gesture control for macOS.
 
+Publicly, a hand gesture is called a spell. A spell is a hand movement that
+triggers an action on your computer.
+
 Gestures (all measured in "palms", i.e. relative to your hand size in the
 frame, so they work whether you sit close to the camera or across the room):
 
@@ -87,7 +90,7 @@ CAMERA_INDEX = 0
 FRAME_WIDTH = 640
 FRAME_HEIGHT = 480
 MODEL_COMPLEXITY = 1          # 0 = faster / less battery, 1 = more accurate
-WINDOW_TITLE = "Hand Gesture Desktop Switcher (claude)"
+WINDOW_TITLE = "Cenno"
 ALWAYS_ON_TOP = True
 SHOW_HELP_AT_START = True
 
@@ -1485,22 +1488,21 @@ def set_always_on_top_macos(window_title, level=1000):
 
 
 HELP_LINES = (
-    "open hand swipe -> <-   prev / next Space" if NATURAL_SWIPE
-    else "open hand swipe <- ->   prev / next Space",
-    "open hand swipe up      Mission Control",
-    "open hand swipe down    App windows / close",
-    "2 fingers move / flick  scroll (glides)",
-    "2 fingers swipe -> <-   back / forward",
-    "point index finger      move cursor",
-    "pinch while pointing    click (x2 / hold=drag)",
-    "OK sign + twist         volume",
-    "thumbs up (hold)        play / pause",
-    "hang loose (hold)       dictation on / off",
-    "thumbs down (hold)      undo (delete dictated text)",
-    "open -> gather tips     Spotlight",
-    "wave (open hand)        lock screen",
-    "rock horns (hold)       pause / resume gestures",
-    "key t: test Space switch (no gesture)",
+    "Reach   · Move cursor",
+    "Pinch   · Click, twice to double click, hold to drag",
+    "Flick   · Scroll with momentum",
+    "Sweep   · Back or forward",
+    "Turn    · Previous or next Space",
+    "Open    · Mission Control",
+    "Fold    · App windows, then close",
+    "Twist   · Volume",
+    "Raise   · Play or pause",
+    "Gather  · Spotlight",
+    "Loose   · Dictation on or off",
+    "Reject  · Undo dictated text",
+    "Horns   · Pause or resume all spells",
+    "Farewell · Lock screen",
+    "key t: test Space switch (no spell)",
 )
 
 ACTION_LABELS = {
@@ -1509,7 +1511,7 @@ ACTION_LABELS = {
     "close_overview": "CLOSE OVERVIEW", "back": "BACK", "forward": "FORWARD",
     "launcher": "SPOTLIGHT", "lock": "LOCK SCREEN", "volume_up": "VOLUME +", "volume_down": "VOLUME -",
     "play_pause": "PLAY / PAUSE", "dictation": "DICTATION", "undo": "UNDO", "scroll_drag": "SCROLL", "scroll_fling": "FLICK",
-    "pause_on": "GESTURES PAUSED", "pause_off": "GESTURES ON",
+    "pause_on": "SPELLS PAUSED", "pause_off": "SPELLS ON",
     "click": "CLICK", "mouse_down": "DRAG", "mouse_up": "DROP",
 }
 

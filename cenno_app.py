@@ -56,26 +56,38 @@ PREVIEW_MARGIN = theme.SPACE[3]
 PRIVACY_LINE = "Runs on your Mac. Nothing leaves it."
 SUPPORT_LINE = "Cenno is free. If it helps you, you can support it on Ko-fi."
 
+# Engine pose -> the name the user knows that spell by.
+POSE_LABELS = {
+    "gather":      "Gather",
+    "ok":          "Twist",
+    "point":       "Reach",
+    "shaka":       "Loose",
+    "horns":       "Horns",
+    "thumbs_up":   "Raise",
+    "thumbs_down": "Reject",
+    "fist":        "fist",
+    "two":         "Flick",
+    "open":        "Turn",
+}
 
-def gesture_lines():
-    """Menu list in the 'Gesture · Action' pattern (swipe direction follows
+
+def spell_lines():
+    """Menu list in the 'Spell · Action' pattern (swipe direction follows
     the engine's natural-swipe setting)."""
-    prev_dir, next_dir = ("right", "left") if core.NATURAL_SWIPE else ("left", "right")
-    return (f"Swipe {prev_dir} · Previous Space",
-            f"Swipe {next_dir} · Next Space",
-            "Swipe up · Mission Control",
-            "Swipe down · App windows, then close",
-            "Two fingers move or flick · Scroll",
-            "Two fingers swipe · Back or forward",
-            "Point · Move cursor",
-            "Pinch while pointing · Click, twice to double click, hold to drag",
-            "OK sign and twist · Volume",
-            "Thumbs up, hold · Play or pause",
-            "Thumbs down, hold · Undo dictated text",
-            "Hang loose, hold · Dictation on or off",
-            "Open hand, gather fingertips · Spotlight",
-            "Wave, open hand side to side · Lock screen",
-            "Rock horns, hold · Pause or resume gestures")
+    return ("Reach · Move cursor",
+            "Pinch · Click, twice to double click, hold to drag",
+            "Flick · Scroll with momentum",
+            "Sweep · Back or forward",
+            "Turn · Previous or next Space",
+            "Open · Mission Control",
+            "Fold · App windows, then close",
+            "Twist · Volume",
+            "Raise · Play or pause",
+            "Gather · Spotlight",
+            "Loose · Dictation on or off",
+            "Reject · Undo dictated text",
+            "Horns · Pause or resume all spells",
+            "Farewell · Lock screen")
 CORNERS = (("top_right", "Top right (default)"), ("top_left", "Top left"),
            ("bottom_right", "Bottom right"), ("bottom_left", "Bottom left"),
            ("free", "Anywhere (drag to move)"))
@@ -301,7 +313,7 @@ class Tracker(threading.Thread):
                 elif pose == "none":
                     self.status = "No hand"
                 else:
-                    self.status = f"Tracking · {pose}"
+                    self.status = f"Tracking · {POSE_LABELS.get(pose, pose)}"
 
                 frames += 1
                 if now - fps_t0 >= 1.0:
@@ -370,8 +382,8 @@ class Tracker(threading.Thread):
             pill(x0, y0, "NO HAND", col("paper-raised"), col("ember-ink"), col("line-strong"))
         else:
             wd = pill(x0, y0, "TRACKING", col("trace"), col("on-trace"))
-            pill(x0 + wd + gap, y0, pose.upper(), col("paper-raised"), col("ink"),
-                 col("line-strong"))
+            pill(x0 + wd + gap, y0, POSE_LABELS.get(pose, pose).upper(),
+                 col("paper-raised"), col("ink"), col("line-strong"))
 
         age = now - self.last_action_time
         if age < core.ACTION_FLASH_SECONDS:
@@ -541,7 +553,7 @@ class CennoApp(rumps.App):
         self.ax_ok = None
 
         self.status_item = rumps.MenuItem("Starting...")
-        self.pause_item = rumps.MenuItem("Pause gestures", callback=self.toggle_pause, key="p")
+        self.pause_item = rumps.MenuItem("Pause spells", callback=self.toggle_pause, key="p")
         self.enabled_item = rumps.MenuItem("Cenno on", callback=self.toggle_enabled, key="o")
         self.preview_menu = rumps.MenuItem("Camera preview")
         self.preview_item = rumps.MenuItem("Show preview", callback=self.toggle_preview)
@@ -575,10 +587,10 @@ class CennoApp(rumps.App):
             self.dictation_items[key] = item
         self.ax_item = rumps.MenuItem("Allow Accessibility...", callback=self.fix_accessibility)
         self.login_item = rumps.MenuItem("Open at login", callback=self.toggle_login)
-        gestures = rumps.MenuItem("Gestures")
-        for line in gesture_lines():
-            gestures.add(rumps.MenuItem(line))
-        self.gestures_menu = gestures
+        spells = rumps.MenuItem("Spells")
+        for line in spell_lines():
+            spells.add(rumps.MenuItem(line))
+        self.spells_menu = spells
         perms = rumps.MenuItem("Permissions")
         perms.add(rumps.MenuItem("Open Camera settings",
                                  callback=lambda _: open_settings_pane("Privacy_Camera")))
@@ -620,7 +632,7 @@ class CennoApp(rumps.App):
                 self.pause_item, self.preview_menu, self.mouse_item]
         if self.displays_menu is not None:
             menu.append(self.displays_menu)
-        menu += [self.dictation_menu, None, self.gestures_menu, self.perms_menu,
+        menu += [self.dictation_menu, None, self.spells_menu, self.perms_menu,
                  self.login_item, None,
                  rumps.MenuItem("Support Cenno on Ko-fi",
                                 callback=lambda _: os.system(f"open '{SUPPORT_URL}'")),
@@ -702,7 +714,7 @@ class CennoApp(rumps.App):
             ok = accessibility_trusted()
             if ok and not self.ax_ok:
                 print("accessibility granted")
-                self._notify("Cenno is ready", "Accessibility is on. Gestures can now control your Mac.")
+                self._notify("Cenno is ready", "Accessibility is on. Spells can now control your Mac.")
             self.ax_ok = ok
         self.ax_item.title = ("Allow Accessibility... (required)" if not self.ax_ok
                               else "Accessibility: allowed")
@@ -785,7 +797,7 @@ class CennoApp(rumps.App):
                      "change volume and move the mouse.\n\n"
                      "1. Click Open Settings.\n"
                      "2. Turn on Cenno in the list (use + to add it if it is missing).\n"
-                     "3. Gestures start working right away."),
+                     "3. Spells start working right away."),
             ok="Open Settings", cancel="Later")
         if choice == 1:
             open_settings_pane("Privacy_Accessibility")
