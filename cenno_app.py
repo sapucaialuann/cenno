@@ -40,10 +40,13 @@ SUPPORT_URL = "https://ko-fi.com/sapucaialuann"
 DEFAULT_SETTINGS = {"enabled": True, "preview": True, "mouse": True,
                     "preview_corner": "top_right",
                     "preview_size": "medium", "preview_pos": None,
-                    "dictation": "auto", "dictation_shortcut": ""}
+                    "dictation": "auto", "dictation_shortcut": "",
+                    "display_mode": "current"}
 DICTATION_MODES = (("auto", "Automatic (Wispr Flow if running, else Apple)"),
                    ("wispr", "Wispr Flow"), ("apple", "Apple Dictation"),
                    ("custom", "Other app (custom shortcut)..."))
+DISPLAY_MODES = (("current", "Current display"),
+                 ("all", "All displays"))
 PREVIEW_W, PREVIEW_H = 280, 210        # floating corner preview (points)
 PREVIEW_SIZES = (("small", "Small", (200, 150)),
                  ("medium", "Medium (default)", (280, 210)),
@@ -184,6 +187,16 @@ class Tracker(threading.Thread):
     def set_paused(self, paused):
         self.engine.paused = paused
         self.dispatcher.submit("pointer_end", None)
+
+    @property
+    def displays_count(self):
+        """How many screens macOS reports right now."""
+        return self.dispatcher.layout.count
+
+    def refresh_displays(self):
+        """Re-read the screen layout.  True when it changed (a display was
+        plugged in, unplugged or moved)."""
+        return self.dispatcher.refresh_displays()
 
     def run(self):
         try:
@@ -549,6 +562,10 @@ class CennoApp(rumps.App):
             self.preview_menu.add(item)
             self.size_items[key] = item
         self.mouse_item = rumps.MenuItem("Mouse control (point + pinch)", callback=self.toggle_mouse)
+        self.displays_menu = None
+        self.display_items = {}
+        if self.tracker.displays_count > 1:
+            self.displays_menu = self._make_display_menu()
         self.dictation_menu = rumps.MenuItem("Dictation (hang loose)")
         self.dictation_items = {}
         for key, label in DICTATION_MODES:
@@ -561,6 +578,7 @@ class CennoApp(rumps.App):
         gestures = rumps.MenuItem("Gestures")
         for line in gesture_lines():
             gestures.add(rumps.MenuItem(line))
+        self.gestures_menu = gestures
         perms = rumps.MenuItem("Permissions")
         perms.add(rumps.MenuItem("Open Camera settings",
                                  callback=lambda _: open_settings_pane("Privacy_Camera")))
@@ -568,14 +586,8 @@ class CennoApp(rumps.App):
                                  callback=lambda _: open_settings_pane("Privacy_Accessibility")))
         perms.add(rumps.MenuItem("Open log file",
                                  callback=lambda _: os.system(f"open -a Console '{LOG_PATH}'")))
-        self.menu = [self.status_item, self.ax_item, None, self.enabled_item,
-                     self.pause_item, self.preview_menu,
-                     self.mouse_item, self.dictation_menu, None, gestures, perms,
-                     self.login_item, None,
-                     rumps.MenuItem("Support Cenno on Ko-fi",
-                                    callback=lambda _: os.system(f"open '{SUPPORT_URL}'")),
-                     rumps.MenuItem(f"About {APP_NAME} {VERSION}", callback=self.show_about),
-                     rumps.MenuItem("Quit Cenno", callback=self.quit_app, key="q")]
+        self.perms_menu = perms
+        self._build_menu()
         self._sync_checks()
 
         self._register_url_handler()
@@ -586,6 +598,45 @@ class CennoApp(rumps.App):
         self.preview_timer.start()
         self.perm_checked = False
         self.dark = None
+
+    def _make_display_menu(self):
+        """Submenu with the pointer mode, for setups with more than one
+        screen.  With a single display there is nothing to choose, so it is
+        not built at all."""
+        menu = rumps.MenuItem("Displays")
+        self.display_items = {}
+        for key, label in DISPLAY_MODES:
+            item = rumps.MenuItem(label, callback=self.set_display_mode)
+            item.mode_key = key
+            menu.add(item)
+            self.display_items[key] = item
+        menu.add(rumps.separator)
+        menu.add(rumps.MenuItem("Move pointer to next display",
+                                callback=self.next_display))
+        return menu
+
+    def _build_menu(self):
+        menu = [self.status_item, self.ax_item, None, self.enabled_item,
+                self.pause_item, self.preview_menu, self.mouse_item]
+        if self.displays_menu is not None:
+            menu.append(self.displays_menu)
+        menu += [self.dictation_menu, None, self.gestures_menu, self.perms_menu,
+                 self.login_item, None,
+                 rumps.MenuItem("Support Cenno on Ko-fi",
+                                callback=lambda _: os.system(f"open '{SUPPORT_URL}'")),
+                 rumps.MenuItem(f"About {APP_NAME} {VERSION}", callback=self.show_about),
+                 rumps.MenuItem("Quit Cenno", callback=self.quit_app, key="q")]
+        self.menu = menu
+
+    def _sync_display_menu(self):
+        """Show the Displays submenu while more than one screen is on, hide it
+        again when the last extra one goes away."""
+        if (self.tracker.displays_count > 1) == (self.displays_menu is not None):
+            return
+        self.displays_menu = (self._make_display_menu()
+                              if self.tracker.displays_count > 1 else None)
+        self._build_menu()
+        self._sync_checks()
 
     # --- menu state ---
     def _sync_checks(self):
@@ -600,6 +651,10 @@ class CennoApp(rumps.App):
         d = self.tracker.dispatcher
         d.dictation_mode = self.settings["dictation"]
         d.dictation_shortcut = sc
+        mode = self.settings.get("display_mode", core.DISPLAY_MODE_CURRENT)
+        d.set_display_mode(mode)
+        for key, item in self.display_items.items():
+            item.state = int(mode == key)
         for key, item in self.corner_items.items():
             item.state = int(self.settings["preview_corner"] == key)
         for key, item in self.size_items.items():
@@ -628,6 +683,10 @@ class CennoApp(rumps.App):
     def tick_ui(self, _):
         dark = theme.system_is_dark()
         self.tracker.reduce_motion = theme.reduce_motion()
+        # 4 Hz is enough to notice a screen being plugged in, unplugged or
+        # dragged to another spot, and cheap enough to leave running.
+        if self.tracker.refresh_displays():
+            self._sync_display_menu()
         if dark != self.dark:
             self.dark = self.tracker.dark = dark
             if self.preview:
@@ -740,6 +799,16 @@ class CennoApp(rumps.App):
         self.settings["preview"] = not self.settings["preview"]
         save_settings(self.settings)
         self._sync_checks()
+
+    def set_display_mode(self, sender):
+        """Where the hand's pointer box reaches: the display under the cursor,
+        or every display laid out side by side."""
+        self.settings["display_mode"] = sender.mode_key
+        save_settings(self.settings)
+        self._sync_checks()
+
+    def next_display(self, _):
+        self.tracker.dispatcher.jump_to_next_display()
 
     def toggle_enabled(self, _):
         self.set_enabled(not self.settings["enabled"])
