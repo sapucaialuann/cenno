@@ -114,12 +114,16 @@ certificate does that.
 
 ## Release checklist
 
-1. Bump the `VERSION` file.
-2. `build_win.bat` — check the output says `BUILD_OK`.
-3. Sign with a real certificate (`CENNO_SIGN_PFX`).
-4. Verify: `signtool verify /pa "dist\Cenno-<version>-Setup.exe"`.
-5. Upload `dist\Cenno-<version>-Setup.exe` to the GitHub release page.
-6. Update the README download link.
+1. Bump the `VERSION` file and commit it.
+2. Tag it and push the tag: `git tag v0.2.1 && git push origin v0.2.1`.
+3. The `Release` workflow builds the `.dmg` and the installer, signs the
+   Windows binaries when a certificate is in the secrets, publishes the
+   GitHub release and puts the `.dmg` in the bucket the website serves.
+4. Check the release page and https://cennoapp.com/download/latest.
+
+To release by hand, build both, sign them and upload them to the release
+page. `scripts/upload_release.sh` in the website repository puts the `.dmg`
+in the bucket on its own.
 
 ## Troubleshooting
 

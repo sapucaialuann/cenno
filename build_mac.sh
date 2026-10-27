@@ -4,9 +4,12 @@ set -euo pipefail
 cd "$(dirname "$0")"
 VERSION=$(grep -E '^[0-9]+\.[0-9]+\.[0-9]+' VERSION | head -1)
 VENV=.venv-build
+# The Python the build runs on. The release workflow sets this to the
+# interpreter it installed (3.11).
+PYTHON=${PYTHON:-python3}
 
 if [ ! -x "$VENV/bin/python" ]; then
-  /usr/bin/python3 -m venv "$VENV"
+  "$PYTHON" -m venv "$VENV"
   "$VENV/bin/pip" install -q --upgrade pip
 fi
 "$VENV/bin/pip" install -q -r requirements-build.txt
@@ -29,13 +32,16 @@ echo "== layered icon (Dark, Clear, Tinted)"
 XCODE_DEV=/Applications/Xcode.app/Contents/Developer
 if [ -x "$XCODE_DEV/usr/bin/actool" ]; then
   rm -rf build/assets && mkdir -p build/assets
-  DEVELOPER_DIR="$XCODE_DEV" xcrun actool assets/Cenno.icon \
-    --compile build/assets --app-icon Cenno --platform macosx \
-    --minimum-deployment-target 12.0 --include-all-app-icons \
-    --output-partial-info-plist build/assets/partial.plist >/dev/null
-  cp build/assets/Assets.car dist/Cenno.app/Contents/Resources/
-  /usr/libexec/PlistBuddy -c "Add :CFBundleIconName string Cenno" dist/Cenno.app/Contents/Info.plist 2>/dev/null \
-    || /usr/libexec/PlistBuddy -c "Set :CFBundleIconName Cenno" dist/Cenno.app/Contents/Info.plist
+  if DEVELOPER_DIR="$XCODE_DEV" xcrun actool assets/Cenno.icon \
+      --compile build/assets --app-icon Cenno --platform macosx \
+      --minimum-deployment-target 12.0 --include-all-app-icons \
+      --output-partial-info-plist build/assets/partial.plist >/dev/null; then
+    cp build/assets/Assets.car dist/Cenno.app/Contents/Resources/
+    /usr/libexec/PlistBuddy -c "Add :CFBundleIconName string Cenno" dist/Cenno.app/Contents/Info.plist 2>/dev/null \
+      || /usr/libexec/PlistBuddy -c "Set :CFBundleIconName Cenno" dist/Cenno.app/Contents/Info.plist
+  else
+    echo "actool could not build the layered icon, using the flat icon only"
+  fi
 else
   echo "Xcode not found, using the flat icon only"
 fi

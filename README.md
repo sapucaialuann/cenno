@@ -20,7 +20,7 @@ platform has its own table below, and
 
 ## Install (macOS, Apple Silicon)
 
-1. Download `Cenno-<version>.dmg` from the Releases page, open it and drag **Cenno** into **Applications**.
+1. Download `Cenno-<version>.dmg` from [cennoapp.com](https://cennoapp.com/download/latest) (or from the Releases page), open it and drag **Cenno** into **Applications**.
 2. The app isn't notarized by Apple yet, so the first launch is blocked. Open it once, then go to **System Settings > Privacy & Security** and click **Open Anyway**.
 3. Allow **Camera** when asked.
 4. Enable Cenno under **System Settings > Privacy & Security > Accessibility** (needed to send shortcuts, scroll and move the mouse), then reopen it.
@@ -131,6 +131,27 @@ just the exe. See `INSTALLER_NOTES.md` for signing and releasing.
 Run the tests:
 
     python tests\run_all.py
+
+## Release
+
+One tag does everything:
+
+    git tag v0.2.1 && git push origin v0.2.1
+
+The `Release` workflow (`.github/workflows/release.yml`) builds the `.dmg` on
+an Apple Silicon runner and the installer on Windows, publishes both on the
+GitHub release, and puts the `.dmg` in the bucket that cennoapp.com serves.
+The download button on the site points at `/download/latest`, so it always
+offers the newest build without the site changing.
+
+Bump the `VERSION` file first: the workflow refuses to release a tag that
+does not match it.
+
+To build the `.dmg` by hand, on an Apple Silicon Mac:
+
+    ./build_mac.sh
+
+That writes `dist/Cenno-<version>.dmg`.
 
 ## Windows differences
 

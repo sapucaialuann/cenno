@@ -1,0 +1,238 @@
+# Builds a release and puts it where the website can serve it.
+#
+#   push a tag (v0.2.1)  ->  the .dmg, the installer, the GitHub release
+#                            and the file in the site's bucket
+#   run it by hand       ->  same, for the tag you type in
+#
+# The .dmg needs an Apple Silicon Mac, so it is built on the macOS arm64
+# runner. The installer is built on Windows.
+
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to release (for example v0.2.1)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  dmg:
+    name: Build the .dmg
+    runs-on: macos-15 # Apple Silicon
+
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          # mediapipe 0.10.9 has no wheels for 3.12 and up.
+          python-version: "3.11"
+
+      - name: Check the version
+        run: |
+          version=$(cat VERSION)
+          tag="${{ github.event.inputs.tag || github.ref_name }}"
+          bare=${tag#v}
+          if [ "$bare" != "$version" ]; then
+            echo "::error::The tag says '$bare' but the VERSION file says '$version'. Bump VERSION, commit, then tag."
+            exit 1
+          fi
+          echo "Building version $version"
+
+      - name: Build the app
+        run: ./build_mac.sh
+        env:
+          PYTHON: python3
+
+      - name: Checksum
+        run: |
+          dmg=$(ls dist/Cenno-*.dmg)
+          shasum -a 256 "$dmg" > "$dmg.sha256"
+          cat "$dmg.sha256"
+          ls -lh "$dmg"
+
+      - name: Keep the .dmg as an artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Cenno-macOS
+          path: |
+            dist/Cenno-*.dmg
+            dist/Cenno-*.dmg.sha256
+          if-no-files-found: error
+          retention-days: 7
+
+  installer:
+    name: Build the Windows installer
+    runs-on: windows-latest
+
+    env:
+      # Empty when no certificate is stored in the repository secrets. The
+      # build then stays unsigned and Windows shows the SmartScreen warning.
+      CENNO_CERT_PFX_BASE64: ${{ secrets.CENNO_CERT_PFX_BASE64 }}
+      CENNO_CERT_PASSWORD: ${{ secrets.CENNO_CERT_PASSWORD }}
+
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          # mediapipe 0.10.9 has no wheels for 3.12 and up.
+          python-version: "3.11"
+
+      - name: Install Inno Setup
+        run: choco install innosetup --no-progress -y
+        # lands in C:\Program Files (x86)\Inno Setup 6\ISCC.exe, which is where
+        # build_win.bat looks for it.
+
+      - name: Set up signing
+        if: ${{ env.CENNO_CERT_PFX_BASE64 != '' }}
+        shell: pwsh
+        run: |
+          # signtool comes with the Windows SDK.
+          $sdk = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin" -Directory -ErrorAction SilentlyContinue |
+                 Sort-Object Name -Descending | Select-Object -First 1
+          if ($sdk) { "$($sdk.FullName)\x64" | Out-File -FilePath $env:GITHUB_PATH -Append }
+
+          # Turn the base64 secret into a .pfx the build can use.
+          [IO.File]::WriteAllBytes("$env:RUNNER_TEMP\cenno.pfx", [Convert]::FromBase64String($env:CENNO_CERT_PFX_BASE64))
+          $pfx = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2 "$env:RUNNER_TEMP\cenno.pfx", $env:CENNO_CERT_PASSWORD
+          $store = New-Object System.Security.Cryptography.X509Certificates.X509Store "My", "CurrentUser"
+          $store.Open("ReadWrite")
+          $store.Add($pfx)
+          $store.Close()
+
+          # build_win.bat signs both binaries when it finds these.
+          "CENNO_SIGN_PFX=$env:RUNNER_TEMP\cenno.pfx" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "CENNO_SIGN_PWD=$env:CENNO_CERT_PASSWORD" | Out-File -FilePath $env:GITHUB_ENV -Append
+          Write-Host "Signing with $pfx.Subject"
+
+      - name: Check that the tag and the VERSION file agree
+        shell: pwsh
+        run: |
+          $version = (Get-Content VERSION -Raw).Trim()
+          $tag = "${{ github.event.inputs.tag || github.ref_name }}"
+          $bare = $tag.TrimStart('v')
+          if ($bare -notlike "*$version*") {
+            Write-Error "The tag says '$bare' but the VERSION file says '$version'. Bump VERSION, commit, then tag."
+            exit 1
+          }
+          Write-Host "Building version $version for tag $tag"
+
+      - name: Build the exe and the installer
+        shell: cmd
+        run: .\build_win.bat
+
+      - name: Check the signature
+        if: ${{ env.CENNO_CERT_PFX_BASE64 != '' }}
+        shell: pwsh
+        run: |
+          $version = (Get-Content VERSION -Raw).Trim()
+          & signtool verify /pa "dist/Cenno-$version-Setup.exe"
+          if ($LASTEXITCODE -ne 0) { throw "The signature does not verify" }
+
+      - name: Keep the installer as an artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Cenno-Windows
+          path: dist/Cenno-*-Setup.exe
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Publish the release
+    needs: [dmg, installer]
+    runs-on: ubuntu-latest
+
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      TAG: ${{ github.event.inputs.tag || github.ref_name }}
+      # The website's bucket. Without a token the release still goes out; the
+      # site keeps serving the build it already has.
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+    steps:
+      - name: Get the build
+        uses: actions/download-artifact@v4
+        with:
+          path: build
+          merge-multiple: true
+
+      - name: Read the version
+        id: version
+        run: |
+          set -euo pipefail
+          # The .dmg is named after the version it carries.
+          dmg=$(ls build/Cenno-*.dmg | head -1)
+          version=${dmg##*/}
+          version=${version#Cenno-}
+          version=${version%.dmg}
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Building release $version"
+
+      - name: Publish the GitHub release
+        run: |
+          version="${{ steps.version.outputs.version }}"
+          dmg="Cenno-$version.dmg"
+          setup="Cenno-$version-Setup.exe"
+
+          gh release view "$TAG" --json tagName >/dev/null 2>&1 || \
+            gh release create "$TAG" --draft --title "Cenno $version" \
+              --notes "Cenno $version for macOS and Windows."
+
+          gh release upload "$TAG" "build/$dmg" --clobber
+          gh release upload "$TAG" "build/$dmg.sha256" --clobber
+          gh release upload "$TAG" "build/$setup" --clobber
+
+          # The release exists now, with both files on it: publish it.
+          gh release edit "$TAG" --draft=false \
+            --notes "Cenno $version for macOS and Windows.
+
+          - macOS: \`$dmg\` (Apple Silicon, macOS 12 or later)
+          - Windows: \`$setup\`
+
+          The app is not notarized yet: on macOS, open it once and click
+          **Open Anyway** in System Settings > Privacy & Security."
+
+          gh release view "$TAG" --json url --jq .url
+
+      - name: Put the .dmg in the site's bucket
+        # The website serves this bucket.
+        if: ${{ env.CLOUDFLARE_API_TOKEN != '' }}
+        env:
+          R2_BUCKET: ${{ vars.R2_BUCKET || 'cenno-releases' }}
+        run: |
+          set -euo pipefail
+          version="${{ steps.version.outputs.version }}"
+          dmg="build/Cenno-$version.dmg"
+          sha=$(sha256sum "$dmg" | cut -d' ' -f1)
+          size=$(stat -c%s "$dmg")
+
+          npx --yes wrangler r2 object put "$R2_BUCKET/Cenno-$version.dmg" \
+            --file "$dmg" --remote \
+            --content-type application/x-apple-diskimage \
+            --cache-control "public, max-age=31536000, immutable"
+
+          printf '%s  %s\n' "$sha" "Cenno-$version.dmg" > build/Cenno-$version.dmg.sha256
+          npx --yes wrangler r2 object put "$R2_BUCKET/Cenno-$version.dmg.sha256" \
+            --file build/Cenno-$version.dmg.sha256 --remote \
+            --content-type "text/plain; charset=utf-8"
+
+          printf '{"version":"%s","name":"Cenno-%s.dmg","size":%s,"sha256":"%s"}\n' \
+            "$version" "$version" "$size" "$sha" > build/latest.json
+          npx --yes wrangler r2 object put "$R2_BUCKET/latest.json" \
+            --file build/latest.json --remote \
+            --content-type application/json --cache-control "no-cache"
+
+          echo "The site now serves $version: https://cennoapp.com/download/latest"
