@@ -68,7 +68,12 @@ def dispatcher_with(rects):
     sys.modules["pyautogui"] = stub
     dpy.system_displays = screens
     try:
-        yield core.Dispatcher(), stub, screens
+        d = core.Dispatcher()
+        # On macOS the dispatcher talks to Quartz instead of pyautogui: it
+        # would post real mouse events and read the real cursor.  Drop it so
+        # the stub is the only thing the test can see.
+        d.quartz = d.appkit = None
+        yield d, stub, screens
     finally:
         dpy.system_displays = old_displays
         if old_module is None:

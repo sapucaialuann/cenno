@@ -141,6 +141,61 @@ def test_fallback_layout_is_always_one_screen():
     assert dpy.fallback_layout(None).count == 1
 
 
+def test_neighbor_follows_the_push_direction():
+    """Pushing out of the box on a side picks the screen on that side."""
+    lay = dpy.DisplayLayout([PRIMARY, LEFT, RIGHT, ABOVE])
+    p = 0
+    assert lay.rects[lay.neighbor(p, (-1, 0))] == LEFT
+    assert lay.rects[lay.neighbor(p, (1, 0))] == RIGHT
+    assert lay.rects[lay.neighbor(p, (0, -1))] == ABOVE
+    assert lay.neighbor(p, (0, 1)) is None
+    right = lay.rects.index(RIGHT)
+    assert lay.rects[lay.neighbor(right, (-1, 0))] == PRIMARY
+    assert lay.neighbor(right, (1, 0)) is None
+
+
+def test_neighbor_with_one_display_is_none():
+    assert dpy.DisplayLayout([PRIMARY]).neighbor(0, (1, 0)) is None
+
+
+class _FakeQuartz:
+    """pyobjc style: out-parameters come back as (err, ids, count)."""
+    class _P:
+        def __init__(self, a, b):
+            self.x = self.width = a
+            self.y = self.height = b
+
+    class _B:
+        def __init__(self, r):
+            self.origin = _FakeQuartz._P(r[0], r[1])
+            self.size = _FakeQuartz._P(r[2], r[3])
+
+    def __init__(self, rects):
+        self.rects = rects
+
+    def CGGetActiveDisplayList(self, maxn, ids, count):
+        return (0, tuple(range(1, len(self.rects) + 1)), len(self.rects))
+
+    def CGDisplayBounds(self, did):
+        return self._B(self.rects[did - 1])
+
+    def CGMainDisplayID(self):
+        return 2
+
+
+def test_quartz_tuple_return_finds_every_display():
+    """Regression: the tuple return used to crash into "one screen"."""
+    found = dpy.quartz_displays(_FakeQuartz([RIGHT, PRIMARY]))
+    assert found == [PRIMARY, RIGHT], found
+
+
+def test_dead_area_slides_onto_the_shorter_screen():
+    short = (1440.0, 0.0, 1016.0, 746.0)
+    q = dpy.clamp_to_nearest((2000.0, 880.0), [PRIMARY, short])
+    assert dpy.contains(short, q) and q[0] == 2000.0, q
+    assert dpy.clamp_to_nearest((700.0, 400.0), [PRIMARY, short]) == (700.0, 400.0)
+
+
 if __name__ == "__main__":
     failures = 0
     for name, fn in sorted(globals().items()):

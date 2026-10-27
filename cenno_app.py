@@ -80,7 +80,8 @@ CORNERS = (("top_right", "Top right (default)"), ("top_left", "Top left"),
            ("bottom_right", "Bottom right"), ("bottom_left", "Bottom left"),
            ("free", "Anywhere (drag to move)"))
 
-POINTER_EVENTS = ("pointer_move", "pointer_end", "click", "mouse_down", "mouse_up")
+POINTER_EVENTS = ("pointer_move", "pointer_end", "click", "mouse_down", "mouse_up",
+                  "display_step")
 
 
 # =============================================================================

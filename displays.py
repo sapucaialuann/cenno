@@ -68,6 +68,18 @@ def normalized_to_rect(n, rect, pad=EDGE_PAD):
     return clamp_point(normalized_to_point(n, rect), rect, pad)
 
 
+def clamp_to_nearest(point, rects, pad=EDGE_PAD):
+    """Pull point onto the closest display, like the real mouse does at the
+    edge of a shorter screen.  A point already on a display stays put."""
+    best, best_d = None, None
+    for r in rects:
+        q = clamp_point(point, r, pad)
+        d = (q[0] - point[0]) ** 2 + (q[1] - point[1]) ** 2
+        if best_d is None or d < best_d:
+            best, best_d = q, d
+    return best if best is not None else point
+
+
 def rects_equal(a, b):
     return list(a) == list(b)
 
@@ -135,6 +147,11 @@ class DisplayLayout:
                 return i
         return -1
 
+    def screen_of(self, point):
+        """Display holding point; the nearest one if it is in a gap."""
+        i = self.index_at(point)
+        return i if i >= 0 else self.nearest(point)
+
     def nearest(self, point):
         """Index of the display whose centre is closest: gaps and edges too."""
         if not self.rects:
@@ -142,6 +159,31 @@ class DisplayLayout:
         return min(range(len(self.rects)),
                    key=lambda i: ((center(self.rects[i])[0] - point[0]) ** 2
                                   + (center(self.rects[i])[1] - point[1]) ** 2))
+
+    def neighbor(self, index, direction):
+        """Display next to `index` in direction (dx, dy), e.g. (-1, 0) for
+        the one on the left.  Picks the closest one whose centre lies on that
+        side, favouring ones straight across over diagonal ones.  None when
+        there is nothing that way."""
+        if not (0 <= index < len(self.rects)):
+            index = self.primary
+        cx, cy = center(self.rects[index])
+        dx, dy = direction
+        best, best_score = None, None
+        for i, r in enumerate(self.rects):
+            if i == index:
+                continue
+            ox, oy = center(r)
+            along = (ox - cx) * dx + (oy - cy) * dy
+            if along <= 0:
+                continue
+            across = abs((ox - cx) * dy) + abs((oy - cy) * dx)
+            if across > along * 2:
+                continue                       # far more sideways than ahead
+            score = along + 2 * across
+            if best_score is None or score < best_score:
+                best, best_score = i, score
+        return best
 
     def next_index(self, index):
         if not self.rects:
@@ -180,14 +222,30 @@ def _wh(value):
     return (float(value.width), float(value.height))
 
 
+def _active_display_ids(quartz, max_displays):
+    """(ids, count) of the active displays.
+
+    pyobjc returns the C out-parameters as a tuple (err, ids, count); older
+    bridges filled a ctypes array instead and returned the count.  Handle
+    both, since getting this wrong silently means "one screen"."""
+    res = quartz.CGGetActiveDisplayList(max_displays, None, None)
+    if isinstance(res, tuple):
+        err, ids, count = res
+        if err != 0 or not ids:
+            return [], 0
+        return list(ids), int(count)
+    import ctypes
+    arr = (ctypes.c_uint32 * max_displays)()
+    count = int(quartz.CGGetActiveDisplayList(max_displays, arr, None))
+    return list(arr), count
+
+
 def quartz_displays(quartz, max_displays=DISPLAY_QUERY_MAX):
     """Rects of every active display, primary first.  [] if Quartz says no."""
     if quartz is None:
         return []
     try:
-        import ctypes
-        ids = (ctypes.c_uint32 * max_displays)()
-        count = int(quartz.CGGetActiveDisplayList(max_displays, ids, None))
+        ids, count = _active_display_ids(quartz, max_displays)
         if count <= 0:
             return []
         rects, primary_rect = [], None
