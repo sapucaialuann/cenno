@@ -201,12 +201,32 @@ SCROLL_TICK_HZ = 120
 LINE_PX = 40                   # pixels per scroll line (non-macOS fallback)
 
 # --- Mouse pointer (point with the index finger, pinch to click) ---
-# The cursor follows the PALM CENTRE (wrist + four knuckles): it does not
-# move when you pinch, unlike the fingertip, so clicks land where you aimed,
-# and averaging five landmarks cancels most of the camera jitter.
+# The cursor follows the four KNUCKLES: they do not move when you pinch,
+# unlike the fingertip, so clicks land where you aimed, and averaging four
+# landmarks cancels most of the camera jitter.  The wrist is left out on
+# purpose: a laptop webcam sits above the screen, so the hand is normally
+# low in the frame and the wrist is often out of view, where MediaPipe
+# guesses it and the anchor jitters.
 # This box of the camera frame (fractions, mirrored view) maps to the whole
-# screen, so you never have to stretch to reach the screen edges.
-POINTER_BOX = (0.30, 0.25, 0.75, 0.65)   # x0, y0, x1, y1
+# screen, so you never have to stretch to reach the screen edges.  It sits
+# low, because the hand rests low: the knuckles reach the top of the screen
+# at ~0.40 of the image height and the bottom at ~0.85.
+POINTER_BOX = (0.30, 0.40, 0.75, 0.85)   # x0, y0, x1, y1
+# "absolute": the knuckles aim at the screen (POINTER_BOX maps to the screen).
+# "relative": the hand works like a trackpad, the cursor follows the
+# movement of the knuckles.  The engine copies this into self.pointer_mode,
+# so the apps can switch modes while running.
+POINTER_MODE = "relative"
+# Relative mode: the cursor moves by the change of the knuckles (a fraction
+# of the frame) times a gain.  The gain grows with the speed of the hand, so
+# slow moves are precise and fast ones cross the screen quickly.
+REL_GAIN_SLOW = 2.0            # gain below REL_SPEED_SLOW ...
+REL_SPEED_SLOW = 0.15          # ... frames per second
+REL_GAIN_FAST = 5.0            # gain at REL_SPEED_FAST ...
+REL_SPEED_FAST = 1.0           # ... frames per second
+REL_EDGE_PUSH = 0.10           # how far past the edge the hand must keep
+                               # pushing before the display changes
+REL_EDGE_RESTART = 0.02        # where the cursor lands on the new screen
 # Several displays: push the palm centre this far past an edge of the box
 # (fraction of the box size) and the pointer moves to the display on that
 # side.  The palm has to come back inside the box before it can happen again,
@@ -439,6 +459,11 @@ class GestureEngine:
         self._wave_reset()
         self.last_click_time = -1e9
         self.last_click_pos = (0.0, 0.0)
+        # Copied out of the constant so the apps can switch modes at runtime.
+        self.pointer_mode = POINTER_MODE
+        # The cursor in relative mode outlives the pointing session, so it
+        # is kept here and not in _reset_pose_state.
+        self.rel_cursor = (0.5, 0.5)
         self._reset_hand()
 
     # --- state resets ---
@@ -513,6 +538,13 @@ class GestureEngine:
         self.edge_votes = 0
         self.edge_dir = None
         self.edge_armed = True
+        # Relative mode: where the knuckles were the last frame, and how far
+        # the hand has pushed past an edge of the screen.  Both belong to the
+        # pointing session, so they are cleared here; the cursor itself is
+        # not (it stays where it was).
+        self.rel_prev = None
+        self.rel_push = (0.0, 0.0)
+        self.rel_edge_armed = True
 
     def no_hand(self, now):
         ev = []
@@ -724,7 +756,7 @@ class GestureEngine:
 
     # --- pointer ---
     def _map_raw(self, x, y, w, h):
-        """Palm centre in box units, unclamped: 0..1 inside the box."""
+        """Knuckle centre in box units, unclamped: 0..1 inside the box."""
         x0, y0, x1, y1 = POINTER_BOX
         return ((x / w - x0) / (x1 - x0), (y / h - y0) / (y1 - y0))
 
@@ -732,9 +764,101 @@ class GestureEngine:
         nx, ny = self._map_raw(x, y, w, h)
         return (min(1.0, max(0.0, nx)), min(1.0, max(0.0, ny)))
 
+    def _rel_gain(self, speed):
+        """Gain for a relative move: slow moves are precise, fast ones are
+        quick.  Ramps linearly between the slow and the fast speed."""
+        if speed <= REL_SPEED_SLOW:
+            return REL_GAIN_SLOW
+        if speed >= REL_SPEED_FAST:
+            return REL_GAIN_FAST
+        t = (speed - REL_SPEED_SLOW) / (REL_SPEED_FAST - REL_SPEED_SLOW)
+        return REL_GAIN_SLOW + t * (REL_GAIN_FAST - REL_GAIN_SLOW)
+
+    def _relative_step(self, ax, ay, w, h, now, ev):
+        """Trackpad mode: the cursor follows the movement of the knuckles.
+
+        The first frame of a pointing session only records where the hand
+        is, so starting to point never jumps the cursor.  The cursor itself
+        survives the session, so putting the hand back and pointing again
+        carries on from where the cursor was."""
+        pos = (ax / w, ay / h)
+        if self.rel_prev is None:
+            self.rel_prev = (pos[0], pos[1], now)
+            return self.rel_cursor
+        prev = self.rel_prev
+        self.rel_prev = (pos[0], pos[1], now)
+        # While the fingers are closed the cursor holds still, so the
+        # movement of the hand is dropped and cannot make it jump later.
+        if self.pinched and not self.dragging:
+            return self.rel_cursor
+        dt = max(now - prev[2], 1e-3)
+        dx = pos[0] - prev[0]
+        dy = pos[1] - prev[1]
+        speed = math.hypot(dx, dy) / dt
+        gain = self._rel_gain(speed)
+        mx, my = dx * gain, dy * gain
+        cx, cy = self.rel_cursor
+        nx = min(1.0, max(0.0, cx + mx))
+        ny = min(1.0, max(0.0, cy + my))
+        # How much of the move was cut off by an edge of the screen.
+        lost_x, lost_y = cx + mx - nx, cy + my - ny
+        self.rel_cursor = (nx, ny)
+        self._rel_edge(lost_x, lost_y, ev)
+        return self.rel_cursor
+
+    def _rel_edge(self, lost_x, lost_y, ev):
+        """The cursor is stuck against an edge and the hand keeps pushing
+        out: count the overshoot and, once it is big enough, ask for the
+        display on that side.  The cursor then starts just inside the far
+        edge of the new screen, so the same push does not repeat."""
+        push_x, push_y = self.rel_push
+        # The overshoot is signed: positive means pushed to the right/down.
+        # Pushing back the other way cancels what came before.
+        if lost_x:
+            push_x = push_x + lost_x if (push_x >= 0) == (lost_x >= 0) else lost_x
+        else:
+            push_x = 0.0
+        if lost_y:
+            push_y = push_y + lost_y if (push_y >= 0) == (lost_y >= 0) else lost_y
+        else:
+            push_y = 0.0
+        self.rel_push = (push_x, push_y)
+        if not self.rel_edge_armed:
+            # One display step per push: re-arm once the cursor has left
+            # the edge it was stuck against.
+            if lost_x == 0.0 and lost_y == 0.0:
+                self.rel_edge_armed = True
+                self.rel_push = (0.0, 0.0)
+            return
+        if push_x >= REL_EDGE_PUSH:
+            d = (1, 0)
+        elif push_x <= -REL_EDGE_PUSH:
+            d = (-1, 0)
+        elif push_y >= REL_EDGE_PUSH:
+            d = (0, 1)
+        elif push_y <= -REL_EDGE_PUSH:
+            d = (0, -1)
+        else:
+            return
+        ev.append(("display_step", d))
+        self.rel_edge_armed = False
+        self.rel_push = (0.0, 0.0)
+        # Pushing right lands on the left edge of the next screen.
+        cx, cy = self.rel_cursor
+        if d[0] > 0:
+            cx = REL_EDGE_RESTART
+        elif d[0] < 0:
+            cx = 1.0 - REL_EDGE_RESTART
+        elif d[1] > 0:
+            cy = REL_EDGE_RESTART
+        else:
+            cy = 1.0 - REL_EDGE_RESTART
+        self.rel_cursor = (cx, cy)
+
     def _edge_step(self, raw, ev):
-        """Palm pushed clearly past an edge of the box: ask for the display
-        on that side.  Re-armed once the palm is back inside the box."""
+        """Knuckles pushed clearly past an edge of the box: ask for the
+        display on that side.  Re-armed once the hand is back inside the
+        box."""
         nx, ny = raw
         m = DISPLAY_EDGE_MARGIN
         if -m < nx < 1 + m and -m < ny < 1 + m:
@@ -759,12 +883,21 @@ class GestureEngine:
         if self.fx is None:
             self.fx = OneEuro(CURSOR_MIN_CUTOFF, CURSOR_BETA)
             self.fy = OneEuro(CURSOR_MIN_CUTOFF, CURSOR_BETA)
-        anchor = [pts[i] for i in (0, 5, 9, 13, 17)]
-        ax = self.fx(sum(p[0] for p in anchor) / 5, now)
-        ay = self.fy(sum(p[1] for p in anchor) / 5, now)
-        raw = self._map_raw(ax, ay, w, h)
-        mapped = (min(1.0, max(0.0, raw[0])), min(1.0, max(0.0, raw[1])))
-        self._edge_step(raw, ev)
+        # Only the four knuckles: the wrist is often out of frame when the
+        # hand is held low, and MediaPipe guesses it, which makes the
+        # anchor jitter.
+        anchor = [pts[i] for i in (5, 9, 13, 17)]
+        ax = self.fx(sum(p[0] for p in anchor) / 4, now)
+        ay = self.fy(sum(p[1] for p in anchor) / 4, now)
+        relative = self.pointer_mode == "relative"
+        if relative:
+            # The cursor is moved by the movement of the hand, not by where
+            # the hand is; the box says nothing about the screen then.
+            mapped = self._relative_step(ax, ay, w, h, now, ev)
+        else:
+            raw = self._map_raw(ax, ay, w, h)
+            mapped = (min(1.0, max(0.0, raw[0])), min(1.0, max(0.0, raw[1])))
+            self._edge_step(raw, ev)
         ox, oy = self.cursor_offset
         live = (mapped[0] + ox, mapped[1] + oy)
 
@@ -785,6 +918,10 @@ class GestureEngine:
             # Freeze where the cursor was just before the fingers closed.
             past = [p for t, p in self.cursor_hist if t <= now - PINCH_LOOKBACK_SECONDS]
             self.freeze_pos = past[-1] if past else (self.cursor or live)
+            if relative:
+                # The relative cursor is the truth here, so park it on the
+                # frozen spot: the drag then continues from there.
+                self.rel_cursor = self.freeze_pos
         elif flip and self.pinched:
             self.pinched = False
             if self.dragging:
@@ -806,6 +943,10 @@ class GestureEngine:
 
         if self.pinched and not self.dragging:
             target = self.freeze_pos                 # hold still for the click
+        elif relative:
+            # The relative cursor is the truth, so there is no offset to
+            # fade out here.
+            target = mapped
         else:
             # Offset left over from a freeze fades out, so nothing jumps.
             k = math.exp(-(1 / 30) / CURSOR_OFFSET_DECAY_SECONDS) if not self.pinched else 1.0
@@ -821,12 +962,21 @@ class GestureEngine:
 
     def _rebase_offset(self, mapped):
         """Keep the cursor where it is when it un-freezes."""
+        if self.pointer_mode == "relative":
+            # The relative cursor already carries the position over, so
+            # there is nothing to shift.
+            self.cursor_offset = (0.0, 0.0)
+            return
         if self.cursor is not None:
             self.cursor_offset = (self.cursor[0] - mapped[0], self.cursor[1] - mapped[1])
 
     def _pointer_end(self, ev):
         if self.pinched and self.dragging:
             ev.append(("mouse_up", self.cursor))
+        if self.pointer_mode == "relative" and self.cursor is not None:
+            # The cursor keeps its place between pointing sessions, so the
+            # next one starts from where this one stopped.
+            self.rel_cursor = self.cursor
         ev.append(("pointer_end", None))
 
     def _scroll_step(self, step, now, ev):

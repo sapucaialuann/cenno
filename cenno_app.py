@@ -328,7 +328,8 @@ class Tracker(threading.Thread):
                 frame, hl, mp_hands.HAND_CONNECTIONS,
                 drawing.DrawingSpec(color=col("trace"), thickness=2, circle_radius=2),
                 drawing.DrawingSpec(color=col("ink"), thickness=1))
-            if self.engine.pose == "point" and self.settings["mouse"]:
+            if (self.engine.pose == "point" and self.settings["mouse"]
+                    and self.engine.pointer_mode == "absolute"):
                 x0, y0, x1, y1 = core.POINTER_BOX
                 box = col("ember") if self.engine.pinched else col("trace")
                 cv2.rectangle(frame, (int(x0 * w), int(y0 * h)),
