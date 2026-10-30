@@ -13,8 +13,9 @@ frame, so they work whether you sit close to the camera or across the room):
                               or closes an overview a swipe opened (Esc)
 
   TWO FINGERS (index + middle up, ring + pinky curled)
-    * move up / down       -> scroll, like dragging the page; a quick flick
-                              keeps gliding and slows down (trackpad momentum)
+    * push down / up       -> scroll, like a gas pedal: where the gesture
+                              starts is neutral, below it the page scrolls
+                              down, above it up, and it stops dead at the end
     * swipe right / left   -> Back / Forward               (Cmd+[ / Cmd+])
 
   POINT (index up, middle / ring / pinky curled)
@@ -51,7 +52,9 @@ Design notes
   * Shortcuts are sent with real key presses (Control down, arrow, Control
     up), which is what macOS needs to switch Spaces.  Media keys (volume,
     play/pause) are real system media keys, so the native HUD appears.
-  * Scrolling is pixel-smooth at 120 Hz with momentum, on its own thread.
+  * Scrolling is pixel-smooth at 120 Hz, on its own thread.  The two-finger
+    gesture works like a gas pedal: the further the hand leaves the neutral
+    point, the faster the page moves, and there is no momentum.
   * Several displays: the pointer can stay on the screen under the cursor
     (default) or span every screen, so moving the hand sideways walks from one
     monitor to the next.  Scrolling and Space switching go to the screen the
@@ -184,6 +187,16 @@ NAV_SWIPE_VELOCITY_PALMS = 8.0
 SCROLL_PX_PER_PALM = 350       # screen pixels per palm of hand travel
 SCROLL_DEADZONE_PALMS_S = 0.6  # below this, drift is ignored (soft ramp)
 SCROLL_DIRECTION = 1           # 1 = drag the page (touchscreen); -1 = invert
+# How the two-finger gesture scrolls: "joystick" = gas pedal (the spot
+# where the gesture starts is neutral; below it the page scrolls down,
+# above it up, with no momentum), "drag" = the page follows the hand.
+SCROLL_MODE = "joystick"
+# Joystick: how far the hand must leave the neutral point before the page
+# moves, and how fast it moves from there.
+JOY_DEADZONE_PALMS = 0.35      # dead zone around the neutral point
+JOY_PX_S_PER_PALM = 900        # screen px/s per palm past the dead zone
+JOY_EXPONENT = 1.5             # > 1: gentle near neutral, fast far away
+JOY_MAX_PX_S = 4000            # top speed cap
 # Flick -> momentum.  A fast stroke that ends keeps gliding and decays like
 # a trackpad.  Repeated flicks in the same direction stack up.
 FLICK_MIN_PALMS_S = 5.0        # release speed that starts a glide
@@ -431,6 +444,7 @@ class GestureEngine:
 
     def __init__(self):
         self.paused = False
+        self.scroll_mode = SCROLL_MODE     # "joystick" (gas pedal) or "drag"
         self.last_fire = -1e9
         self.overview_until = 0.0
         self.last_open_time = -1e9
@@ -500,6 +514,7 @@ class GestureEngine:
         self.scroll_block_dir = 0
         self.scroll_block_until = 0.0
         self.scroll_still_since = None
+        self.scroll_neutral = None         # joystick neutral point, per pose
         self.fx = self.fy = None           # cursor filters
         self.pinched = False
         self.pinch_votes = 0
@@ -532,6 +547,8 @@ class GestureEngine:
 
     def _scroll_release(self, now, ev):
         """Fingers 'lifted' (pose ended / hand gone): glide if moving fast."""
+        if self.scroll_mode == "joystick":
+            return                  # gas pedal: the page stops dead, no glide
         recent = [v for t, v in self.scroll_hist if t >= now - FLICK_WINDOW_SECONDS]
         if recent:
             peak = max(recent, key=abs)
@@ -684,7 +701,7 @@ class GestureEngine:
 
         # Two-finger scroll: drag follows the hand, flicks glide.
         if self.pose == "two" and warmed and step is not None:
-            self._scroll_step(step, now, ev)
+            self._scroll_step(step, now, ev, cy, palm)
 
         # Wave: open hand side to side a few times -> lock screen.
         if self.pose == "open" and warmed:
@@ -829,7 +846,29 @@ class GestureEngine:
             ev.append(("mouse_up", self.cursor))
         ev.append(("pointer_end", None))
 
-    def _scroll_step(self, step, now, ev):
+    def _scroll_step(self, step, now, ev, cy=None, palm=None):
+        if self.scroll_mode == "joystick":
+            # Gas pedal: the hand is a joystick, the page does not follow
+            # it.  The height where the pose started is the neutral point,
+            # so dipping down and coming straight back up scrolls both
+            # ways (no direction lock).
+            if self.scroll_neutral is None:
+                self.scroll_neutral = cy
+            offset = (cy - self.scroll_neutral) / palm   # + = below neutral
+            reach = abs(offset) - JOY_DEADZONE_PALMS
+            if reach <= 0:
+                return                       # inside the dead zone: no motion
+            speed = min(JOY_MAX_PX_S,
+                        JOY_PX_S_PER_PALM * reach ** JOY_EXPONENT)
+            # The Dispatcher turns scroll_drag into pixels with
+            # SCROLL_PX_PER_PALM, so send the travel this frame would have
+            # been: a speed of px/s for one frame is speed * sdt pixels.
+            travel = speed * step[2] / SCROLL_PX_PER_PALM
+            # Sign: in drag mode the page scrolls down when the hand moves
+            # UP, and a negative scroll_drag scrolls the page down, so the
+            # hand BELOW neutral (offset > 0) has to send a negative one.
+            ev.append(("scroll_drag", -travel if offset > 0 else travel))
+            return
         sdx, sdy, sdt = step
         vx, vy = sdx / sdt, sdy / sdt
         self.scroll_hist.append((now, vy))
@@ -1663,7 +1702,8 @@ HELP_LINES_MAC = (
     else "open hand swipe <- ->   prev / next Space",
     "open hand swipe up      Mission Control",
     "open hand swipe down    App windows / close",
-    "2 fingers move / flick  scroll (glides)",
+    "2 fingers down / up     scroll (gas pedal)"
+    if SCROLL_MODE == "joystick" else "2 fingers move / flick  scroll (glides)",
     "2 fingers swipe -> <-   back / forward",
     "point index finger      move cursor",
     "pinch while pointing    click (x2 / hold=drag)",
@@ -1681,7 +1721,8 @@ HELP_LINES_WIN = (
     else "open hand swipe <- ->   prev / next desktop",
     "open hand swipe up      Task View",
     "open hand swipe down    show desktop",
-    "2 fingers move / flick  scroll (glides)",
+    "2 fingers down / up     scroll (gas pedal)"
+    if SCROLL_MODE == "joystick" else "2 fingers move / flick  scroll (glides)",
     "2 fingers swipe -> <-   back / forward",
     "point index finger      move cursor",
     "pinch while pointing    click (x2 / hold=drag)",

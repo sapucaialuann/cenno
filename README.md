@@ -49,7 +49,7 @@ Voice Control > Commands > +): phrase "Cenno on", action **Open URL**,
 |---|---|
 | Open hand swipe right / left | Previous / next Space |
 | Open hand swipe up / down | Mission Control / App windows (down again closes) |
-| Two fingers up/down, flick | Scroll with momentum |
+| Two fingers down / up | Scroll like a gas pedal: below the point where the gesture started scrolls down, above it up |
 | Two-finger swipe right / left | Back / Forward |
 | Point with index | Move the cursor |
 | Pinch while pointing | Click; twice = double-click; hold = drag |
@@ -179,7 +179,7 @@ Cenno on Windows is intentionally Windows-native rather than a macOS clone:
 | Open hand swipe right / left | Previous / next virtual desktop |
 | Open hand swipe up | Task View (`Win+Tab`) |
 | Open hand swipe down | Show desktop (`Win+D`) |
-| Two fingers up/down, flick | Scroll with momentum |
+| Two fingers down / up | Scroll like a gas pedal: below the point where the gesture started scrolls down, above it up |
 | Two-finger swipe right / left | Back / Forward (`Alt+Left/Right`) |
 | Point with index | Move the cursor |
 | Pinch while pointing | Click; twice = double-click; hold = drag |
