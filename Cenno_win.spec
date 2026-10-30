@@ -54,6 +54,7 @@ hiddenimports += [
     "displays",
     "shortcuts",
     "recorder_win",
+    "headzone",
     "theme",
     "pystray._win32",
     "PIL._tkinter_finder",

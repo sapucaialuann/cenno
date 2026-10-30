@@ -21,6 +21,7 @@ import traceback
 import rumps
 
 import hand_desktop_switcher as core
+import headzone
 import recorder_mac
 import shortcuts
 import theme
@@ -235,6 +236,7 @@ class Tracker(threading.Thread):
                                model_complexity=core.MODEL_COMPLEXITY,
                                min_detection_confidence=0.6,
                                min_tracking_confidence=0.5)
+        face_tracker = headzone.FaceTracker()
         cap = None
         frames, fps_t0 = 0, time.monotonic()
         try:
@@ -245,6 +247,8 @@ class Tracker(threading.Thread):
                         cap.release()
                         cap = None
                         self.dispatcher.submit("pointer_end", None)
+                        for name, n in self.engine.end_ptt():
+                            self.dispatcher.submit(name, n)
                     self.status = "Off"
                     with self.lock:
                         self.preview_frame = None
@@ -288,7 +292,10 @@ class Tracker(threading.Thread):
                 if res.multi_hand_landmarks:
                     hl = res.multi_hand_landmarks[0]
                     pts = [(p.x * w, p.y * h) for p in hl.landmark]
-                    events = self.engine.update(pts, w, h, now)
+                    # Face detection only while hang loose is in play.
+                    face = (face_tracker.update(rgb, w, h, now)
+                            if self.engine.wants_face else None)
+                    events = self.engine.update(pts, w, h, now, face=face)
                 else:
                     hl = None
                     events = self.engine.no_hand(now)
@@ -329,6 +336,7 @@ class Tracker(threading.Thread):
             if cap is not None:
                 cap.release()
             hands.close()
+            face_tracker.close()
 
     def _make_preview(self, cv2, drawing, mp_hands, frame, hl, now):
         """Small preview with status pills, encoded as JPEG for the panel."""
@@ -340,6 +348,10 @@ class Tracker(threading.Thread):
                 frame, hl, mp_hands.HAND_CONNECTIONS,
                 drawing.DrawingSpec(color=col("trace"), thickness=2, circle_radius=2),
                 drawing.DrawingSpec(color=col("ink"), thickness=1))
+            face = self.engine.debug.get("face")
+            if self.engine.ptt_active and face is not None:
+                cv2.rectangle(frame, (int(face[0]), int(face[1])),
+                              (int(face[2]), int(face[3])), col("trace"), 2)
             if self.engine.pose == "point" and self.settings["mouse"]:
                 x0, y0, x1, y1 = core.POINTER_BOX
                 box = col("ember") if self.engine.pinched else col("trace")
