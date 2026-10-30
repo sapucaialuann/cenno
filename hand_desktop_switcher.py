@@ -12,7 +12,7 @@ frame, so they work whether you sit close to the camera or across the room):
                               trackpad style: the hand pushes the screen.
                               Set NATURAL_SWIPE = False to flip it.
     * swipe up             -> Mission Control              (Ctrl+Up)
-    * swipe down           -> App windows                  (Ctrl+Down)
+    * swipe down           -> minimize the front window    (Cmd+M)
                               or closes an overview a swipe opened (Esc)
 
   TWO FINGERS (index + middle up, ring + pinky curled)
@@ -320,7 +320,7 @@ ACTION_FLASH_SECONDS = 1.0
 
 
 OS_NAME = platform.system()
-DOWN_OPENS_OVERVIEW = OS_NAME == "Darwin"   # macOS App windows is an overview
+DOWN_OPENS_OVERVIEW = False   # swipe down minimizes (Mac) / shows the desktop (Windows)
 
 # Where the pointer box points: one screen, or every screen at once.
 DISPLAY_MODE_CURRENT = "current"
@@ -330,14 +330,13 @@ DISPLAY_MODE_ALL = "all"
 # On Windows, virtual desktops and Task View are global, but the scroll wheel
 # is sent to the window under the cursor, so the cursor still has to travel.
 _FOCUS_SCREEN_ACTIONS = {
-    "Darwin": ("space_left", "space_right", "overview", "app_windows",
-               "close_overview"),
+    "Darwin": ("space_left", "space_right", "overview", "close_overview"),
     "Windows": ("space_left", "space_right"),
 }
 FOCUS_SCREEN_ACTIONS = _FOCUS_SCREEN_ACTIONS.get(OS_NAME, ())
 # Shortcuts handled by the app in front rather than by the system (macOS):
 # these are sent with the modifier flags set on every key event.
-APP_SHORTCUTS = ("undo", "back", "forward")
+APP_SHORTCUTS = ("undo", "back", "forward", "app_windows")
 # How often the scroll thread may re-check which screen it should be on.
 FOCUS_CHECK_SECONDS = 0.05
 
@@ -1264,7 +1263,8 @@ NX_SOUND_UP, NX_SOUND_DOWN, NX_PLAY = 0, 1, 16
 KEY_BINDINGS = {
     "Darwin": {
         "space_left": ("ctrl", "left"), "space_right": ("ctrl", "right"),
-        "overview": ("ctrl", "up"), "app_windows": ("ctrl", "down"),
+        "overview": ("ctrl", "up"),
+        "app_windows": ("cmd", "m"),          # swipe down: minimize the front window
         "close_overview": ("escape",),
         "back": ("cmd", "["), "forward": ("cmd", "]"),
         "launcher": ("cmd", "space"), "undo": ("cmd", "z"),
@@ -2016,7 +2016,7 @@ HELP_LINES_MAC = (
     "open/flat swipe -> <-   prev / next Space" if NATURAL_SWIPE
     else "open/flat swipe <- ->   prev / next Space",
     "open hand swipe up      Mission Control",
-    "open hand swipe down    App windows / close",
+    "open hand swipe down    minimize window",
     "2 fingers down / up     scroll (gas pedal)"
     if SCROLL_MODE == "joystick" else "2 fingers move / flick  scroll (glides)",
     "2 fingers swipe -> <-   back / forward",
@@ -2058,7 +2058,7 @@ HELP_LINES = HELP_LINES_WIN if OS_NAME == "Windows" else HELP_LINES_MAC
 ACTION_LABELS_MAC = {
     "space_left": "SPACE <-", "space_right": "SPACE ->",
     "display_step": "NEXT DISPLAY",
-    "overview": "MISSION CONTROL", "app_windows": "APP WINDOWS",
+    "overview": "MISSION CONTROL", "app_windows": "MINIMIZE",
     "close_overview": "CLOSE OVERVIEW", "back": "BACK", "forward": "FORWARD",
     "launcher": "SPOTLIGHT", "lock": "LOCK SCREEN", "volume_up": "VOLUME +", "volume_down": "VOLUME -",
     "play_pause": "PLAY / PAUSE", "dictation": "DICTATION", "dictation_hold_start": "TALK", "dictation_hold_end": "TALK END", "undo": "UNDO", "scroll_drag": "SCROLL", "scroll_fling": "FLICK",

@@ -70,7 +70,7 @@ def gesture_lines():
     return (f"Slap {prev_dir} · Previous Space",
             f"Slap {next_dir} · Next Space",
             "Swipe up · Mission Control",
-            "Swipe down · App windows, then close",
+            "Swipe down · Minimize window",
             "Two fingers below or above start · Scroll",
             "Two fingers swipe · Back or forward",
             "Point · Move cursor",

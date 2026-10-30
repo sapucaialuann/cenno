@@ -48,7 +48,7 @@ Voice Control > Commands > +): phrase "Cenno on", action **Open URL**,
 | Gesture | Action |
 |---|---|
 | Slap right / left, open or flat hand | Previous / next Space |
-| Open hand swipe up / down | Mission Control / App windows (down again closes) |
+| Open hand swipe up / down | Mission Control / minimize the front window (down closes Mission Control) |
 | Two fingers down / up | Scroll like a gas pedal: below the point where the gesture started scrolls down, above it up |
 | Two-finger swipe right / left | Back / Forward |
 | Point with index | Move the cursor |
