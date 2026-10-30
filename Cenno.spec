@@ -7,7 +7,7 @@ datas, binaries, hiddenimports = [], [], []
 d, b, h = collect_all("mediapipe")
 datas += d; binaries += b; hiddenimports += h
 hiddenimports += [
-    "hand_desktop_switcher", "theme", "displays", "rumps",
+    "hand_desktop_switcher", "theme", "displays", "headzone", "rumps",
     "Quartz", "AppKit", "Foundation", "ApplicationServices",
     "AVFoundation", "ServiceManagement",
 ]

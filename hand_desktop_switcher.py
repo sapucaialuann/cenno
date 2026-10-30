@@ -76,6 +76,7 @@ import time
 from collections import deque
 
 import displays as dpy
+import headzone
 
 
 # =============================================================================
@@ -112,6 +113,10 @@ THUMB_UP_MARGIN = 0.15        # thumb tip must be this far above everything
 POSE_STABLE_FRAMES = 3        # frames a pose must persist before it counts
 SHAKA_MIN_SPAN = 0.95         # hang loose: thumb tip to pinky tip, palms
 SHAKA_HOLD_SECONDS = 0.4      # hold hang loose this long to toggle dictation
+PTT_HOLD_SECONDS = 0.25       # hang loose by the head: start push-to-talk this fast
+PTT_MAX_SECONDS = 180.0       # safety: release push-to-talk after this long
+HEAD_STABLE_FRAMES = 3        # consecutive "beside the head" frames to start talking
+HEAD_LEAVE_FRAMES = 4         # consecutive frames away from the head to stop
 WISPR_BUNDLE_ID = "com.electron.wispr-flow"   # used for dictation when running
 
 # Key codes for custom dictation shortcuts (macOS virtual key codes, US layout).
@@ -423,6 +428,8 @@ class GestureEngine:
         self._wave_reset()
         self.last_click_time = -1e9
         self.last_click_pos = (0.0, 0.0)
+        self.ptt_active = False            # kept across hand resets: see _ptt_end
+        self.ptt_since = 0.0
         self._reset_hand()
 
     # --- state resets ---
@@ -442,6 +449,24 @@ class GestureEngine:
         self.latched = False
         self.debug = {}
         self._reset_pose_state()
+
+    @property
+    def wants_face(self):
+        """True when face detection is needed (hang loose seen or talking),
+        so the camera loop can skip it the rest of the time."""
+        return (self.ptt_active or self.pose == "shaka"
+                or self.raw_pose == "shaka")
+
+    def _ptt_end(self, ev):
+        if self.ptt_active:
+            self.ptt_active = False
+            ev.append(("dictation_hold_end", 1))
+
+    def end_ptt(self):
+        """Release push-to-talk if held (tracking switched off)."""
+        ev = []
+        self._ptt_end(ev)
+        return ev
 
     def _wave_reset(self):
         self.wave_anchor = None
@@ -496,9 +521,13 @@ class GestureEngine:
         self.edge_votes = 0
         self.edge_dir = None
         self.edge_armed = True
+        self.head_votes = 0
+        self.head_away = 0
 
     def no_hand(self, now):
         ev = []
+        if self.paused:
+            self._ptt_end(ev)
         if self.pose != "none" and HAND_LOST_GRACE_SECONDS > 0:
             if self.lost_since is None:
                 self.lost_since = now
@@ -510,8 +539,11 @@ class GestureEngine:
             self._scroll_release(now, ev)   # hand dropped mid-flick: glide
         if self.pose == "point":
             self._pointer_end(ev)
+        self._ptt_end(ev)
         self._reset_hand()
-        return [] if self.paused else ev
+        if self.paused:
+            return [e for e in ev if e[0] == "dictation_hold_end"]
+        return ev
 
     def _scroll_release(self, now, ev):
         """Fingers 'lifted' (pose ended / hand gone): glide if moving fast."""
@@ -522,8 +554,10 @@ class GestureEngine:
                 ev.append(("scroll_fling", peak))
 
     # --- main step ---
-    def update(self, pts, w, h, now):
+    def update(self, pts, w, h, now, face=None):
         ev = []
+        if self.paused:
+            self._ptt_end(ev)
         raw_palm = palm_size(pts)
         self.ema_palm = raw_palm if self.ema_palm is None else (
             PALM_EMA_ALPHA * raw_palm + (1 - PALM_EMA_ALPHA) * self.ema_palm)
@@ -552,6 +586,7 @@ class GestureEngine:
                 self._scroll_release(now, ev)
             if self.pose == "point":
                 self._pointer_end(ev)
+            self._ptt_end(ev)
             self.pose, self.pose_since = raw_pose, now
             self.latched = False
             self.buf.clear()
@@ -564,6 +599,17 @@ class GestureEngine:
                 self.latched = True
         if self.pose == "open":
             self.last_open_time = now
+
+        # Hang loose beside the head (push-to-talk) vs anywhere else (toggle).
+        if self.pose == "shaka":
+            near = headzone.near_head(pts, shape_palm, face)
+            self.head_votes = self.head_votes + 1 if near else 0
+            self.head_away = 0 if near else self.head_away + 1
+            self.debug["head"] = near
+            self.debug["face"] = face
+            if self.ptt_active and (self.head_away >= HEAD_LEAVE_FRAMES
+                                    or now - self.ptt_since >= PTT_MAX_SECONDS):
+                self._ptt_end(ev)
 
         # Hold gestures.
         held = now - self.pose_since
@@ -579,7 +625,14 @@ class GestureEngine:
             elif self.pose == "thumbs_down" and held >= THUMBS_DOWN_HOLD_SECONDS:
                 ev.append(("undo", 1))
                 self.latched = True
-            elif self.pose == "shaka" and held >= SHAKA_HOLD_SECONDS:
+            elif (self.pose == "shaka" and held >= PTT_HOLD_SECONDS
+                  and self.head_votes >= HEAD_STABLE_FRAMES and not self.paused):
+                ev.append(("dictation_hold_start", 1))
+                self.ptt_active, self.ptt_since = True, now
+                self.head_away = 0
+                self.latched = True
+            elif (self.pose == "shaka" and held >= SHAKA_HOLD_SECONDS
+                  and self.head_votes == 0):
                 ev.append(("dictation", 1))
                 self.latched = True
 
@@ -694,7 +747,8 @@ class GestureEngine:
                                        max(abs(x1 - x0), abs(y1 - y0)) / palm / (t1 - t0))
 
         if self.paused:
-            ev = [e for e in ev if e[0].startswith("pause")]
+            ev = [e for e in ev
+                  if e[0].startswith("pause") or e[0] == "dictation_hold_end"]
         return ev
 
     # --- pointer ---
@@ -1709,6 +1763,7 @@ def main():
                            min_tracking_confidence=0.5)
     engine = GestureEngine()
     dispatcher = Dispatcher()
+    face_tracker = headzone.FaceTracker()
 
     cap = cv2.VideoCapture(CAMERA_INDEX)
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, FRAME_WIDTH)
@@ -1752,7 +1807,13 @@ def main():
                 hl = results.multi_hand_landmarks[0]
                 mp_drawing.draw_landmarks(frame, hl, mp_hands.HAND_CONNECTIONS)
                 pts = [(p.x * w, p.y * h) for p in hl.landmark]
-                events = engine.update(pts, w, h, now)
+                # Face detection only while hang loose is in play.
+                face = (face_tracker.update(rgb, w, h, now)
+                        if engine.wants_face else None)
+                events = engine.update(pts, w, h, now, face=face)
+                if face is not None and engine.ptt_active:
+                    cv2.rectangle(frame, (int(face[0]), int(face[1])),
+                                  (int(face[2]), int(face[3])), (0, 255, 0), 1)
                 if engine.pose == "point":
                     # Show the area that maps to the whole screen.
                     x0, y0, x1, y1 = POINTER_BOX
@@ -1789,6 +1850,8 @@ def main():
                  (80, 80, 255) if engine.paused else (255, 255, 255), 2)
             if now - last_action_time < ACTION_FLASH_SECONDS:
                 text(frame, last_action, 55, 0.8, (0, 255, 0), 2)
+            elif engine.ptt_active:
+                text(frame, "TALK", 55, 0.8, (0, 255, 0), 2)
             elif engine.pose in ("open", "two") and not engine.armed:
                 text(frame, "settle hand to re-arm", 55, 0.55, (0, 200, 255))
             d = engine.debug
@@ -1838,6 +1901,8 @@ def main():
                 break
             if key == ord("p"):
                 engine.paused = not engine.paused
+                for name, n in engine.end_ptt():
+                    dispatcher.submit(name, n)
                 dispatcher.submit("pointer_end", None)
             if key == ord("h"):
                 show_help = not show_help
@@ -1849,6 +1914,7 @@ def main():
         cap.release()
         cv2.destroyAllWindows()
         hands.close()
+        face_tracker.close()
 
 
 if __name__ == "__main__":
