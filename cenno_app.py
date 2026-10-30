@@ -72,6 +72,7 @@ def gesture_lines():
             "OK sign and twist · Volume",
             "Thumbs up, hold · Play or pause",
             "Thumbs down, hold · Undo dictated text",
+            "Thumb left or right · Arrow key, hold to repeat",
             "Hang loose, hold · Dictation on or off",
             "Open hand, gather fingertips · Spotlight",
             "Wave, open hand side to side · Lock screen",

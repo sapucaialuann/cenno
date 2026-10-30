@@ -56,6 +56,7 @@ Voice Control > Commands > +): phrase "Cenno on", action **Open URL**,
 | OK sign + twist | Volume |
 | Thumbs up (hold) | Play / pause |
 | Thumbs down (hold) | Undo (deletes the last dictated text) |
+| Thumb pointing left / right | Left / right arrow: next or previous slide. Hold to repeat |
 | Hang loose (hold) | Dictation on / off (pick the tool in menu bar > Dictation: Wispr Flow, Apple Dictation, or any app via its shortcut) |
 | Open hand then gather fingertips | Spotlight |
 | Wave, open hand side to side | Lock screen |
@@ -185,6 +186,7 @@ Cenno on Windows is intentionally Windows-native rather than a macOS clone:
 | OK sign + twist | Volume |
 | Thumbs up (hold) | Play / pause |
 | Thumbs down (hold) | Undo (deletes the last dictated text) |
+| Thumb pointing left / right | Left / right arrow: next or previous slide. Hold to repeat |
 | Hang loose (hold) | Dictation on / off (Win+H voice typing, Wispr Flow, or custom shortcut) |
 | Open hand then gather fingertips | Start menu (`Win`) |
 | Wave, open hand side to side | Lock screen (`Win+L`) |
