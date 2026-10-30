@@ -120,8 +120,13 @@ OK_OTHER_MIN = 0.45           # middle tip must be this far from thumb (OK)
 GATHER_MAX_SPREAD = 0.22      # all fingertips within this spread = gather
 THUMB_UP_MIN_LEN = 0.60       # thumb tip to thumb MCP, palms
 THUMB_UP_MARGIN = 0.15        # thumb tip must be this far above everything
+THUMB_DOWN_MIN_LEN = 0.45     # thumbs down: the thumb points away from a camera
+                              # above the screen, so it looks shorter
 THUMB_SIDE_MARGIN = 0.25      # thumb tip must be this far left / right of everything
 POSE_STABLE_FRAMES = 3        # frames a pose must persist before it counts
+HOLD_FLICKER_SECONDS = 0.3    # a hold pose that drops out for less than this
+                              # and comes back keeps its hold timer (and does
+                              # not fire twice)
 SHAKA_MIN_SPAN = 0.95         # hang loose: thumb tip to pinky tip, palms
 SHAKA_HOLD_SECONDS = 0.4      # hold hang loose this long to toggle dictation
 WISPR_BUNDLE_ID = "com.electron.wispr-flow"   # used for dictation when running
@@ -146,7 +151,7 @@ KEY_CODES.update({"b": 11, "q": 12, "w": 13, "e": 14, "r": 15, "y": 16, "t": 17,
                   "f1": 122, "f2": 120, "f3": 99, "f4": 118, "f5": 96, "f6": 97,
                   "f7": 98, "f8": 100, "f9": 101, "f10": 109, "f11": 103,
                   "f12": 111, "f13": 105, "f14": 107, "f15": 113, "f16": 106,
-                  "f17": 64, "f18": 79, "f19": 80})
+                  "f17": 64, "f18": 79, "f19": 80, "[": 33, "]": 30})
 
 # --- Motion units ---
 # Motion is measured in palms, but a hand close to the camera has a huge
@@ -330,6 +335,9 @@ _FOCUS_SCREEN_ACTIONS = {
     "Windows": ("space_left", "space_right"),
 }
 FOCUS_SCREEN_ACTIONS = _FOCUS_SCREEN_ACTIONS.get(OS_NAME, ())
+# Shortcuts handled by the app in front rather than by the system (macOS):
+# these are sent with the modifier flags set on every key event.
+APP_SHORTCUTS = ("undo", "back", "forward")
 # How often the scroll thread may re-check which screen it should be on.
 FOCUS_CHECK_SECONDS = 0.05
 
@@ -414,7 +422,7 @@ def classify_pose(pts, palm):
                 and pts[4][1] < highest_other - THUMB_UP_MARGIN * palm):
             return "thumbs_up", feats
         lowest_other = max(p[1] for i, p in enumerate(pts) if i not in (3, 4))
-        if (thumb_len >= THUMB_UP_MIN_LEN
+        if (thumb_len >= THUMB_DOWN_MIN_LEN
                 and pts[4][1] > lowest_other + THUMB_UP_MARGIN * palm):
             return "thumbs_down", feats
         # The frame is mirrored before landmarks: image-left is the user's left.
@@ -583,6 +591,7 @@ class GestureEngine:
         self.raw_count = 0
         self.pose = "none"
         self.pose_since = 0.0
+        self.left_pose = (None, 0.0, False, -1e9)   # pose, since, latched, left at
         self.lost_since = None
         self.latched = False
         self.debug = {}
@@ -733,8 +742,16 @@ class GestureEngine:
                 self._scroll_release(now, ev)
             if self.pose == "point":
                 self._pointer_end(ev)
+            # A hold pose that flickers out for a moment (a thumbs down
+            # reads as a fist for a frame or two) keeps its hold timer and
+            # latch, so the hold still completes and never fires twice.
+            left = (self.pose, self.pose_since, self.latched, now)
+            back = self.left_pose
+            self.left_pose = left
             self.pose, self.pose_since = raw_pose, now
             self.latched = False
+            if back[0] == raw_pose and now - back[3] <= HOLD_FLICKER_SECONDS:
+                self.pose_since, self.latched = back[1], back[2]
             self.buf.clear()
             self._reset_pose_state()
             if (raw_pose == "gather"
@@ -1465,6 +1482,12 @@ class Dispatcher:
             return
         keys = self.bindings.get(name)
         if not keys:
+            return
+        if name in APP_SHORTCUTS and self.quartz is not None:
+            # pyautogui leaves the Command flag off the key event itself.
+            # The system's own shortcuts (Spaces, Spotlight) don't mind, but
+            # apps read the flag, so Cmd+Z arrived as a plain "z".
+            self._send_shortcut("+".join(keys))
             return
         if name in FOCUS_SCREEN_ACTIONS:
             # Space, Mission Control and App windows belong to the screen the
