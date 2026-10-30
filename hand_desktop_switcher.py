@@ -31,6 +31,7 @@ frame, so they work whether you sit close to the camera or across the room):
   OPEN HAND -> GATHER all fingertips together ("ma che vuoi")
                            -> Spotlight                    (Cmd+Space)
   WAVE (open hand, side to side twice) -> lock screen     (Ctrl+Cmd+Q)
+                                          wave again while locked to wake the screen
 
   ROCK HORNS (hold ~1 s)   -> pause / resume all gestures (fist = rest, does nothing)
 
@@ -918,6 +919,48 @@ MEDIA_KEYS = {"volume_up": ("volumeup", NX_SOUND_UP),
               "play_pause": ("playpause", NX_PLAY)}
 PYAUTOGUI_NAMES = {"cmd": "command", "alt": "option"} if OS_NAME == "Darwin" else {}
 
+LOCK_POLL_SECONDS = 0.5        # how often to ask the OS whether the screen is locked
+
+
+def screen_locked(quartz=None):
+    """True while the lock screen is up.  Cenno keeps running behind it, so
+    the camera still sees the hand; this is how it knows to only listen for
+    the wake wave."""
+    try:
+        if OS_NAME == "Darwin" and quartz is not None:
+            session = quartz.CGSessionCopyCurrentDictionary()
+            return bool(session and session.get("CGSSessionScreenIsLocked", False))
+        if OS_NAME == "Windows":
+            return _windows_input_desktop_locked()
+    except Exception as exc:
+        print(f"WARN: could not read the lock state: {exc}")
+    return False
+
+
+def _windows_input_desktop_locked():
+    """Windows draws the lock screen on its own secure desktop (Winlogon).
+    While it is up, the input desktop cannot be opened, or is not "Default"."""
+    import ctypes
+    from ctypes import wintypes
+    user32 = ctypes.windll.user32
+    user32.OpenInputDesktop.restype = wintypes.HANDLE
+    user32.CloseDesktop.argtypes = [wintypes.HANDLE]
+    user32.GetUserObjectInformationW.argtypes = [
+        wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD,
+        ctypes.POINTER(wintypes.DWORD)]
+    desk = user32.OpenInputDesktop(0, False, 0x0001)      # DESKTOP_READOBJECTS
+    if not desk:
+        return True
+    try:
+        name = ctypes.create_unicode_buffer(64)
+        needed = wintypes.DWORD()
+        if not user32.GetUserObjectInformationW(desk, 2, name, ctypes.sizeof(name),
+                                                ctypes.byref(needed)):  # UOI_NAME
+            return False
+        return name.value.lower() != "default"
+    finally:
+        user32.CloseDesktop(desk)
+
 
 class Dispatcher:
     def __init__(self):
@@ -941,8 +984,33 @@ class Dispatcher:
                                        before_post=self._focus_screen)
         self.pointer = PointerAnimator(self.quartz, self.pag, self.layout,
                                        cursor_pos=self.cursor_position)
+        self.locked = False
+        self._lock_checked = -1e9
         self.q = queue.Queue()
         threading.Thread(target=self._worker, daemon=True).start()
+
+    # --- lock screen ---
+    def screen_locked(self, now=None):
+        """The lock state, asked of the OS at most every LOCK_POLL_SECONDS."""
+        now = time.monotonic() if now is None else now
+        if now - self._lock_checked >= LOCK_POLL_SECONDS:
+            self._lock_checked = now
+            locked = screen_locked(self.quartz)
+            if locked != self.locked:
+                print("screen locked: only the wave (wake) is listened to"
+                      if locked else "screen unlocked")
+                self.locked = locked
+        return self.locked
+
+    def while_locked(self, events, now=None):
+        """Filter a frame's gestures through the lock screen.  Unlocked they
+        pass untouched.  Locked, nothing reaches the lock screen except the
+        wave, which wakes the display so Touch ID, an Apple Watch, Windows
+        Hello or the password can take over.  Cenno never unlocks itself:
+        anyone can wave at a camera."""
+        if not self.screen_locked(now):
+            return events
+        return [("wake", 1)] if any(name == "lock" for name, _ in events) else []
 
     # --- screens ---
     def refresh_displays(self):
@@ -1094,6 +1162,9 @@ class Dispatcher:
         if name == "lock" and OS_NAME == "Darwin":
             self._lock_screen()
             return
+        if name == "wake":
+            self._wake_display()
+            return
         if name in MEDIA_KEYS:
             pag_key, nx = MEDIA_KEYS[name]
             for _ in range(n):
@@ -1127,6 +1198,30 @@ class Dispatcher:
         except Exception as exc:
             print(f"WARN: lock via login.framework failed ({exc}); trying shortcut")
             self.pag.hotkey("ctrl", "command", "q", interval=0.01)
+
+    def _wake_display(self):
+        """Turn the display back on (lock screen stays locked)."""
+        if OS_NAME == "Darwin":
+            # -u declares user activity, which turns a sleeping display on.
+            subprocess.Popen(["caffeinate", "-u", "-t", "2"])
+        elif OS_NAME == "Windows":
+            self._wake_display_windows()
+
+    def _wake_display_windows(self):
+        import ctypes
+        from ctypes import wintypes
+        user32, kernel32 = ctypes.windll.user32, ctypes.windll.kernel32
+        # Reset the display idle timer, ask the monitors to power on, and
+        # nudge the mouse: which of these lights a sleeping screen differs
+        # between Windows versions and drivers.
+        kernel32.SetThreadExecutionState(0x00000001 | 0x00000002)  # SYSTEM | DISPLAY
+        user32.SendMessageTimeoutW.argtypes = [
+            wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM,
+            wintypes.UINT, wintypes.UINT, ctypes.c_void_p]
+        user32.SendMessageTimeoutW(0xFFFF, 0x0112, 0xF170, -1,   # HWND_BROADCAST, WM_SYSCOMMAND, SC_MONITORPOWER on
+                                   0x0002, 500, None)            # SMTO_ABORTIFHUNG
+        user32.mouse_event(0x0001, 0, 1, 0, 0)                   # MOUSEEVENTF_MOVE
+        user32.mouse_event(0x0001, 0, -1, 0, 0)
 
     # Menu titles that mean Start / Stop Dictation (en, de, pt, es, fr).
     DICTATION_WORDS = ("dictation", "diktat", "ditado", "dictado", "dict\u00e9e")
@@ -1644,7 +1739,7 @@ HELP_LINES_MAC = (
     "hang loose (hold)       dictation on / off",
     "thumbs down (hold)      undo (delete dictated text)",
     "open -> gather tips     Spotlight",
-    "wave (open hand)        lock screen",
+    "wave (open hand)        lock screen; again to wake",
     "rock horns (hold)       pause / resume gestures",
     "key t: test Space switch (no gesture)",
 )
@@ -1662,7 +1757,7 @@ HELP_LINES_WIN = (
     "hang loose (hold)       dictation on / off",
     "thumbs down (hold)      undo (delete dictated text)",
     "open -> gather tips     Start menu",
-    "wave (open hand)        lock screen",
+    "wave (open hand)        lock screen; again to wake",
     "rock horns (hold)       pause / resume gestures",
     "key t: test desktop switch (no gesture)",
 )
@@ -1676,7 +1771,7 @@ ACTION_LABELS_MAC = {
     "display_step": "NEXT DISPLAY",
     "overview": "MISSION CONTROL", "app_windows": "APP WINDOWS",
     "close_overview": "CLOSE OVERVIEW", "back": "BACK", "forward": "FORWARD",
-    "launcher": "SPOTLIGHT", "lock": "LOCK SCREEN", "volume_up": "VOLUME +", "volume_down": "VOLUME -",
+    "launcher": "SPOTLIGHT", "lock": "LOCK SCREEN", "wake": "WAKE SCREEN", "volume_up": "VOLUME +", "volume_down": "VOLUME -",
     "play_pause": "PLAY / PAUSE", "dictation": "DICTATION", "dictation_hold_start": "TALK", "dictation_hold_end": "TALK END", "undo": "UNDO", "scroll_drag": "SCROLL", "scroll_fling": "FLICK",
     "pause_on": "GESTURES PAUSED", "pause_off": "GESTURES ON",
     "click": "CLICK", "mouse_down": "DRAG", "mouse_up": "DROP",
@@ -1685,7 +1780,7 @@ ACTION_LABELS_WIN = {
     "space_left": "DESKTOP <-", "space_right": "DESKTOP ->",
     "overview": "TASK VIEW", "app_windows": "SHOW DESKTOP",
     "close_overview": "CLOSE TASK VIEW", "back": "BACK", "forward": "FORWARD",
-    "launcher": "START MENU", "lock": "LOCK SCREEN", "volume_up": "VOLUME +", "volume_down": "VOLUME -",
+    "launcher": "START MENU", "lock": "LOCK SCREEN", "wake": "WAKE SCREEN", "volume_up": "VOLUME +", "volume_down": "VOLUME -",
     "play_pause": "PLAY / PAUSE", "dictation": "DICTATION", "dictation_hold_start": "TALK", "dictation_hold_end": "TALK END", "undo": "UNDO", "scroll_drag": "SCROLL", "scroll_fling": "FLICK",
     "pause_on": "GESTURES PAUSED", "pause_off": "GESTURES ON",
     "click": "CLICK", "mouse_down": "DRAG", "mouse_up": "DROP",
@@ -1767,6 +1862,7 @@ def main():
                                6, (0, 255, 255), -1)
             else:
                 events = engine.no_hand(now)
+            events = dispatcher.while_locked(events, now)
 
             for name, n in events:
                 dispatcher.submit(name, n)

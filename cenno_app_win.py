@@ -119,7 +119,7 @@ def gesture_lines():
             "Thumbs down, hold · Undo dictated text",
             "Hang loose, hold · Dictation on or off",
             "Open hand, gather fingertips · Start menu",
-            "Wave, open hand side to side · Lock screen",
+            "Wave, open hand side to side · Lock screen, wave again to wake it",
             "Rock horns, hold · Pause or resume gestures")
 
 # ------------------------------------------------------------------
@@ -435,6 +435,7 @@ class Tracker(threading.Thread):
                 else:
                     hl = None
                     events = self.engine.no_hand(now)
+                events = self.dispatcher.while_locked(events, now)
 
                 for name, n in events:
                     if name in POINTER_EVENTS and not self.settings["mouse"]:

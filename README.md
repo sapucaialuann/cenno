@@ -58,7 +58,7 @@ Voice Control > Commands > +): phrase "Cenno on", action **Open URL**,
 | Thumbs down (hold) | Undo (deletes the last dictated text) |
 | Hang loose (hold) | Dictation on / off (pick the tool in menu bar > Dictation: Wispr Flow, Apple Dictation, or any app via its shortcut) |
 | Open hand then gather fingertips | Spotlight |
-| Wave, open hand side to side | Lock screen |
+| Wave, open hand side to side | Lock screen; wave again while locked to wake the display |
 | Rock horns (hold 1 s) | Pause / resume gestures (a fist does nothing, so you can rest your hand) |
 
 ## Files
@@ -162,7 +162,7 @@ Cenno on Windows is intentionally Windows-native rather than a macOS clone:
 - **Task View instead of Mission Control.** Swipe up opens Task View (`Win+Tab`), not Mission Control.
 - **Show desktop instead of App windows.** Swipe down shows the desktop (`Win+D`), since Windows has no app-windows overview.
 - **Start menu instead of Spotlight.** Gathering fingertips opens the Start menu (`Win`), not Spotlight.
-- **Lock screen `Win+L`.** Waving locks the screen with `Win+L`.
+- **Lock screen `Win+L`.** Waving locks the screen with `Win+L`. Waving again while locked wakes the display so Windows Hello or a PIN can unlock it.
 - **Undo is `Ctrl+Z`.** Thumbs down sends `Ctrl+Z` (not `Cmd+Z`).
 - **Back / Forward is `Alt+Left/Right`.** Two-finger swipe uses the Windows browser / File Explorer convention.
 - **No Accessibility permission.** Windows has no Accessibility equivalent; the only OS permission is Camera (Settings > Privacy & security > Camera).
@@ -187,7 +187,7 @@ Cenno on Windows is intentionally Windows-native rather than a macOS clone:
 | Thumbs down (hold) | Undo (deletes the last dictated text) |
 | Hang loose (hold) | Dictation on / off (Win+H voice typing, Wispr Flow, or custom shortcut) |
 | Open hand then gather fingertips | Start menu (`Win`) |
-| Wave, open hand side to side | Lock screen (`Win+L`) |
+| Wave, open hand side to side | Lock screen (`Win+L`); wave again while locked to wake the display |
 | Rock horns (hold 1 s) | Pause / resume gestures (a fist does nothing, so you can rest your hand) |
 
 ## Files
