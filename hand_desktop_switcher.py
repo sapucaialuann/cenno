@@ -4,8 +4,11 @@ Cenno: hand-gesture control for macOS.
 Gestures (all measured in "palms", i.e. relative to your hand size in the
 frame, so they work whether you sit close to the camera or across the room):
 
-  OPEN HAND (3+ fingers spread)
-    * swipe right / left   -> previous / next Space        (Ctrl+Left/Right)
+  OPEN HAND (3+ fingers spread) or FLAT HAND (fingers straight, together)
+    * slap right / left    -> previous / next Space        (Ctrl+Left/Right)
+                              a long fast sweep across the frame; the hand may
+                              be flat (fingers together) or spread, palm or back
+                              to the camera.
                               trackpad style: the hand pushes the screen.
                               Set NATURAL_SWIPE = False to flip it.
     * swipe up             -> Mission Control              (Ctrl+Up)
@@ -34,7 +37,8 @@ frame, so they work whether you sit close to the camera or across the room):
 
   OPEN HAND -> GATHER all fingertips together ("ma che vuoi")
                            -> Spotlight                    (Cmd+Space)
-  WAVE (open hand, side to side twice) -> lock screen     (Ctrl+Cmd+Q)
+  WAVE (open or flat hand, short strokes side to side)
+                           -> lock screen               (Ctrl+Cmd+Q)
 
   ROCK HORNS (hold ~1 s)   -> pause / resume all gestures (fist = rest, does nothing)
 
@@ -160,6 +164,10 @@ MIN_SWIPE_DISTANCE_PALMS = 1.8
 MIN_SWIPE_VELOCITY_PALMS = 10.0
 SWIPE_MONOTONIC_RATIO = 0.85  # share of steps that must go the same way
 COOLDOWN_SECONDS = 0.75
+# A sideways sweep only changes Space when the hand really travels: this
+# fraction of the frame width, measured inside the swipe buffer.  It keeps a
+# small sideways wiggle from switching Spaces.
+SLAP_MIN_TRAVEL_FRAC = 0.22
 # True: trackpad style, hand moving right goes to the previous Space (the
 # hand "pushes" the screen).  False: hand moving right goes to the next Space.
 NATURAL_SWIPE = True
@@ -248,6 +256,7 @@ ARROW_REPEAT_INTERVAL = 0.5    # ...then one more arrow press per interval
 GATHER_FROM_OPEN_WINDOW = 0.6  # gather must follow an open hand within this
 LAUNCHER_COOLDOWN_SECONDS = 1.5  # Cmd+Space toggles: one fire per gesture, ignore flicker
 WAVE_STROKE_PALMS = 0.35       # wave: each side-to-side stroke at least this far
+WAVE_MAX_STROKE_PALMS = 1.2    # wave: a stroke longer than this is a sweep
 WAVE_MIN_REVERSALS = 3         # direction changes needed (two full waves)
 WAVE_WINDOW_SECONDS = 1.5      # ...all within this long
 WAVE_COOLDOWN_SECONDS = 3.0    # one lock per wave
@@ -323,7 +332,7 @@ def finger_ratio(pts, finger):
 def classify_pose(pts, palm):
     """Return (pose, features).  Poses: ok, gather, point, thumbs_up,
     thumbs_down, thumb_left, thumb_right, fist, horns,
-    shaka (hang loose), two, open, other."""
+    shaka (hang loose), two, open, flat, other."""
     ratios = {f: finger_ratio(pts, f) for f in FINGERS}
     ext = {f: r >= EXTENDED_RATIO for f, r in ratios.items()}
     curl = {f: r <= CURLED_RATIO for f, r in ratios.items()}
@@ -373,6 +382,11 @@ def classify_pose(pts, palm):
         return "fist", feats
     if ext["index"] and ext["middle"] and curl["ring"] and curl["pinky"]:
         return "two", feats
+    if all(ext.values()) and spread < OPEN_MIN_SPREAD:
+        # Flat hand: the four fingers are straight and held together, so the
+        # fingertips are close and the hand is not "open".  The thumb can be
+        # anywhere.  Checked after every other pose, so it steals nothing.
+        return "flat", feats
     if spread >= OPEN_MIN_SPREAD:
         return "open", feats
     return "other", feats
@@ -462,26 +476,41 @@ class GestureEngine:
     def _wave_reset(self):
         self.wave_anchor = None
         self.wave_dir = 0
-        self.wave_ext = 0.0
+        self.wave_extreme = 0.0
         self.wave_flips = deque()
 
     def _wave_step(self, x, now):
-        """Open hand moving side to side. x is the centroid in palm units."""
+        """Open hand moving side to side. x is the centroid in palm units.
+        wave_anchor is where the current stroke started, wave_extreme the
+        furthest point it has reached since."""
         if now - self.last_lock < WAVE_COOLDOWN_SECONDS:
             return False
         if self.wave_anchor is None:
-            self.wave_anchor = self.wave_ext = x
+            self.wave_anchor = self.wave_extreme = x
+            return False
+        # A stroke longer than WAVE_MAX_STROKE_PALMS is a sweep across the
+        # frame (a slap), not a wave: drop the tracker and start over.
+        # The two ranges cannot overlap.  A slap travels at least
+        # SLAP_MIN_TRAVEL_FRAC of the frame width and the palm used for
+        # motion is at most MOTION_PALM_MAX_FRAC of the frame width, so a
+        # slap stroke is at least 0.22 / 0.11 = 2.0 palms long, while a wave
+        # stroke stays below 1.2 palms.
+        if abs(x - self.wave_anchor) > WAVE_MAX_STROKE_PALMS:
+            self._wave_reset()
             return False
         if self.wave_dir == 0:
             if abs(x - self.wave_anchor) >= WAVE_STROKE_PALMS:
                 self.wave_dir = 1 if x > self.wave_anchor else -1
-                self.wave_ext = x
+                self.wave_extreme = x
             return False
-        if (x - self.wave_ext) * self.wave_dir > 0:
-            self.wave_ext = x
-        elif abs(self.wave_ext - x) >= WAVE_STROKE_PALMS:
+        if (x - self.wave_extreme) * self.wave_dir > 0:
+            # Still going the same way: the stroke grows.
+            self.wave_extreme = x
+        elif abs(self.wave_extreme - x) >= WAVE_STROKE_PALMS:
+            # The hand came back far enough: that is a reversal, and the
+            # next stroke starts where this one ended.
             self.wave_dir = -self.wave_dir
-            self.wave_ext = x
+            self.wave_anchor = self.wave_extreme = x
             self.wave_flips.append(now)
         while self.wave_flips and now - self.wave_flips[0] > WAVE_WINDOW_SECONDS:
             self.wave_flips.popleft()
@@ -686,8 +715,8 @@ class GestureEngine:
         if self.pose == "two" and warmed and step is not None:
             self._scroll_step(step, now, ev)
 
-        # Wave: open hand side to side a few times -> lock screen.
-        if self.pose == "open" and warmed:
+        # Wave: open or flat hand side to side a few times -> lock screen.
+        if self.pose in ("open", "flat") and warmed:
             if self._wave_step(cx / palm, now):
                 ev.append(("lock", 1))
                 self.buf.clear()
@@ -696,8 +725,8 @@ class GestureEngine:
         else:
             self._wave_reset()
 
-        # Swipes (open hand: 4 directions; two fingers: horizontal nav).
-        family = self.pose if self.pose in ("open", "two") else None
+        # Swipes (open / flat hand: 4 directions; two fingers: horizontal nav).
+        family = self.pose if self.pose in ("open", "flat", "two") else None
         cutoff = now - SWIPE_BUFFER_SECONDS
         if family and warmed:
             self.buf.append((cx, cy, now))
@@ -705,12 +734,16 @@ class GestureEngine:
             self.buf.popleft()
         if (family and warmed and len(self.buf) >= 2 and self.armed
                 and now - self.last_fire > COOLDOWN_SECONDS):
-            fired = self._eval_swipe(family, palm, now)
+            fired = self._eval_swipe(family, palm, now, w)
             if fired:
                 ev.append((fired, 1))
                 self.buf.clear()
                 self.armed, self.still_since = False, None
                 self.last_fire = now
+                if fired in ("space_left", "space_right"):
+                    # A slap is not a wave: drop the wave tracker, or the
+                    # return stroke could be counted as a wave.
+                    self._wave_reset()
 
         if len(self.buf) >= 2:
             (x0, y0, t0), (x1, y1, t1) = self.buf[0], self.buf[-1]
@@ -871,13 +904,13 @@ class GestureEngine:
             self.scroll_still_since = None
             self.scroll_hist.clear()
 
-    def _eval_swipe(self, family, palm, now):
+    def _eval_swipe(self, family, palm, now, w):
         (x0, y0, t0), (x1, y1, t1) = self.buf[0], self.buf[-1]
         dt = t1 - t0
         if dt <= 0:
             return None
         dx, dy = (x1 - x0) / palm, (y1 - y0) / palm
-        if family == "open":
+        if family in ("open", "flat"):
             dmin, vmin = MIN_SWIPE_DISTANCE_PALMS, MIN_SWIPE_VELOCITY_PALMS
         else:
             dmin, vmin = NAV_SWIPE_DISTANCE_PALMS, NAV_SWIPE_VELOCITY_PALMS
@@ -885,14 +918,18 @@ class GestureEngine:
         if abs(dx) >= abs(dy):
             if (abs(dx) >= dmin and abs(dx) / dt >= vmin
                     and monotonic_ok(self.buf, dx, 0, noise)):
-                if family == "open":
+                if family in ("open", "flat"):
+                    # A slap has to cross a good part of the frame, so a
+                    # small sideways move never switches Space.
+                    if abs(x1 - x0) < SLAP_MIN_TRAVEL_FRAC * w:
+                        return None
                     moved_right = dx > 0
                     if NATURAL_SWIPE:
                         return "space_left" if moved_right else "space_right"
                     return "space_right" if moved_right else "space_left"
                 # Like a trackpad: fingers moving right = back.
                 return "back" if dx > 0 else "forward"
-        elif family == "open":
+        elif family in ("open", "flat"):
             if (abs(dy) >= dmin and abs(dy) / dt >= vmin
                     and monotonic_ok(self.buf, dy, 1, noise)):
                 if dy < 0:
@@ -1659,8 +1696,8 @@ def set_always_on_top_macos(window_title, level=1000):
 
 
 HELP_LINES_MAC = (
-    "open hand swipe -> <-   prev / next Space" if NATURAL_SWIPE
-    else "open hand swipe <- ->   prev / next Space",
+    "open/flat swipe -> <-   prev / next Space" if NATURAL_SWIPE
+    else "open/flat swipe <- ->   prev / next Space",
     "open hand swipe up      Mission Control",
     "open hand swipe down    App windows / close",
     "2 fingers move / flick  scroll (glides)",
@@ -1672,13 +1709,13 @@ HELP_LINES_MAC = (
     "hang loose (hold)       dictation on / off",
     "thumbs down (hold)      undo (delete dictated text)",
     "open -> gather tips     Spotlight",
-    "wave (open hand)        lock screen",
+    "wave (short strokes)    lock screen",
     "rock horns (hold)       pause / resume gestures",
     "key t: test Space switch (no gesture)",
 )
 HELP_LINES_WIN = (
-    "open hand swipe -> <-   prev / next desktop" if NATURAL_SWIPE
-    else "open hand swipe <- ->   prev / next desktop",
+    "open/flat swipe -> <-   prev / next desktop" if NATURAL_SWIPE
+    else "open/flat swipe <- ->   prev / next desktop",
     "open hand swipe up      Task View",
     "open hand swipe down    show desktop",
     "2 fingers move / flick  scroll (glides)",
@@ -1690,7 +1727,7 @@ HELP_LINES_WIN = (
     "hang loose (hold)       dictation on / off",
     "thumbs down (hold)      undo (delete dictated text)",
     "open -> gather tips     Start menu",
-    "wave (open hand)        lock screen",
+    "wave (short strokes)    lock screen",
     "rock horns (hold)       pause / resume gestures",
     "key t: test desktop switch (no gesture)",
 )

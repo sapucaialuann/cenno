@@ -47,7 +47,7 @@ Voice Control > Commands > +): phrase "Cenno on", action **Open URL**,
 
 | Gesture | Action |
 |---|---|
-| Open hand swipe right / left | Previous / next Space |
+| Slap right / left, open or flat hand | Previous / next Space |
 | Open hand swipe up / down | Mission Control / App windows (down again closes) |
 | Two fingers up/down, flick | Scroll with momentum |
 | Two-finger swipe right / left | Back / Forward |
@@ -59,7 +59,7 @@ Voice Control > Commands > +): phrase "Cenno on", action **Open URL**,
 | Thumb pointing left / right | Left / right arrow: next or previous slide. Hold to repeat |
 | Hang loose (hold) | Dictation on / off (pick the tool in menu bar > Dictation: Wispr Flow, Apple Dictation, or any app via its shortcut) |
 | Open hand then gather fingertips | Spotlight |
-| Wave, open hand side to side | Lock screen |
+| Wave, short strokes side to side | Lock screen |
 | Rock horns (hold 1 s) | Pause / resume gestures (a fist does nothing, so you can rest your hand) |
 
 ## Files
@@ -176,7 +176,7 @@ Cenno on Windows is intentionally Windows-native rather than a macOS clone:
 
 | Gesture | Action |
 |---|---|
-| Open hand swipe right / left | Previous / next virtual desktop |
+| Slap right / left, open or flat hand | Previous / next virtual desktop |
 | Open hand swipe up | Task View (`Win+Tab`) |
 | Open hand swipe down | Show desktop (`Win+D`) |
 | Two fingers up/down, flick | Scroll with momentum |
@@ -189,7 +189,7 @@ Cenno on Windows is intentionally Windows-native rather than a macOS clone:
 | Thumb pointing left / right | Left / right arrow: next or previous slide. Hold to repeat |
 | Hang loose (hold) | Dictation on / off (Win+H voice typing, Wispr Flow, or custom shortcut) |
 | Open hand then gather fingertips | Start menu (`Win`) |
-| Wave, open hand side to side | Lock screen (`Win+L`) |
+| Wave, short strokes side to side | Lock screen (`Win+L`) |
 | Rock horns (hold 1 s) | Pause / resume gestures (a fist does nothing, so you can rest your hand) |
 
 ## Files
