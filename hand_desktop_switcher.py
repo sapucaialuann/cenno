@@ -2154,7 +2154,7 @@ def main():
                  (80, 80, 255) if engine.paused else (255, 255, 255), 2)
             if now - last_action_time < ACTION_FLASH_SECONDS:
                 text(frame, last_action, 55, 0.8, (0, 255, 0), 2)
-            elif engine.pose in ("open", "two") and not engine.armed:
+            elif engine.pose in ("open", "flat", "two") and not engine.armed:
                 text(frame, "settle hand to re-arm", 55, 0.55, (0, 200, 255))
             d = engine.debug
             if d and results.multi_hand_landmarks:

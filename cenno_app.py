@@ -41,12 +41,18 @@ DEFAULT_SETTINGS = {"enabled": True, "preview": True, "mouse": True,
                     "preview_corner": "top_right",
                     "preview_size": "medium", "preview_pos": None,
                     "dictation": "auto", "dictation_shortcut": "",
-                    "display_mode": "current"}
+                    "display_mode": "current",
+                    "pointer_mode": core.POINTER_MODE,
+                    "scroll_mode": core.SCROLL_MODE}
 DICTATION_MODES = (("auto", "Automatic (Wispr Flow if running, else Apple)"),
                    ("wispr", "Wispr Flow"), ("apple", "Apple Dictation"),
                    ("custom", "Other app (custom shortcut)..."))
 DISPLAY_MODES = (("current", "Current display"),
                  ("all", "All displays"))
+POINTER_MODES = (("relative", "Trackpad: cursor follows your hand's movement"),
+                 ("absolute", "Aim: hand position is screen position"))
+SCROLL_MODES = (("joystick", "Gas pedal: hold below or above to scroll"),
+                ("drag", "Drag the page, flick to glide"))
 PREVIEW_W, PREVIEW_H = 280, 210        # floating corner preview (points)
 PREVIEW_SIZES = (("small", "Small", (200, 150)),
                  ("medium", "Medium (default)", (280, 210)),
@@ -65,7 +71,7 @@ def gesture_lines():
             f"Slap {next_dir} · Next Space",
             "Swipe up · Mission Control",
             "Swipe down · App windows, then close",
-            "Two fingers move or flick · Scroll",
+            "Two fingers below or above start · Scroll",
             "Two fingers swipe · Back or forward",
             "Point · Move cursor",
             "Pinch while pointing · Click, twice to double click, hold to drag",
@@ -584,6 +590,10 @@ class CennoApp(rumps.App):
         self.display_items = {}
         if self.tracker.displays_count > 1:
             self.displays_menu = self._make_display_menu()
+        self.pointer_menu, self.pointer_items = self._make_mode_menu(
+            "Pointer", POINTER_MODES, self.set_pointer_mode)
+        self.scroll_menu, self.scroll_items = self._make_mode_menu(
+            "Scrolling", SCROLL_MODES, self.set_scroll_mode)
         self.dictation_menu = rumps.MenuItem("Dictation (hang loose)")
         self.dictation_items = {}
         for key, label in DICTATION_MODES:
@@ -617,6 +627,16 @@ class CennoApp(rumps.App):
         self.perm_checked = False
         self.dark = None
 
+    def _make_mode_menu(self, title, modes, callback):
+        menu = rumps.MenuItem(title)
+        items = {}
+        for key, label in modes:
+            item = rumps.MenuItem(label, callback=callback)
+            item.mode_key = key
+            menu.add(item)
+            items[key] = item
+        return menu, items
+
     def _make_display_menu(self):
         """Submenu with the pointer mode, for setups with more than one
         screen.  With a single display there is nothing to choose, so it is
@@ -635,7 +655,8 @@ class CennoApp(rumps.App):
 
     def _build_menu(self):
         menu = [self.status_item, self.ax_item, None, self.enabled_item,
-                self.pause_item, self.preview_menu, self.mouse_item]
+                self.pause_item, self.preview_menu, self.mouse_item,
+                self.pointer_menu, self.scroll_menu]
         if self.displays_menu is not None:
             menu.append(self.displays_menu)
         menu += [self.dictation_menu, None, self.gestures_menu, self.perms_menu,
@@ -678,6 +699,13 @@ class CennoApp(rumps.App):
         for key, item in self.size_items.items():
             item.state = int(self.settings["preview_size"] == key)
         self.mouse_item.state = int(self.settings["mouse"])
+        engine = self.tracker.engine
+        engine.pointer_mode = self.settings["pointer_mode"]
+        engine.scroll_mode = self.settings["scroll_mode"]
+        for key, item in self.pointer_items.items():
+            item.state = int(engine.pointer_mode == key)
+        for key, item in self.scroll_items.items():
+            item.state = int(engine.scroll_mode == key)
         self.login_item.state = int(login_item_enabled())
 
     def _set_icon(self, paused):
@@ -822,6 +850,17 @@ class CennoApp(rumps.App):
         """Where the hand's pointer box reaches: the display under the cursor,
         or every display laid out side by side."""
         self.settings["display_mode"] = sender.mode_key
+        save_settings(self.settings)
+        self._sync_checks()
+
+    def set_pointer_mode(self, sender):
+        self.tracker.dispatcher.submit("pointer_end", None)
+        self.settings["pointer_mode"] = sender.mode_key
+        save_settings(self.settings)
+        self._sync_checks()
+
+    def set_scroll_mode(self, sender):
+        self.settings["scroll_mode"] = sender.mode_key
         save_settings(self.settings)
         self._sync_checks()
 

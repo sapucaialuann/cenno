@@ -68,6 +68,8 @@ DEFAULT_SETTINGS = {
     "first_run": True,
     "theme": "system",
     "display_mode": "current",
+    "pointer_mode": core.POINTER_MODE,
+    "scroll_mode": core.SCROLL_MODE,
 }
 
 DICTATION_MODES = (
@@ -82,6 +84,15 @@ DICTATION_MODES = (
 DISPLAY_MODES = (
     ("current", "Current display"),
     ("all",     "All displays"),
+)
+
+POINTER_MODES = (
+    ("relative", "Trackpad: cursor follows your hand's movement"),
+    ("absolute", "Aim: hand position is screen position"),
+)
+SCROLL_MODES = (
+    ("joystick", "Gas pedal: hold below or above to scroll"),
+    ("drag",     "Drag the page, flick to glide"),
 )
 
 PREVIEW_W, PREVIEW_H = 280, 210        # current panel size; mutated by set_size()
@@ -110,7 +121,7 @@ def gesture_lines():
             f"Slap {next_dir} · Next virtual desktop",
             "Swipe up · Task View",
             "Swipe down · Show desktop",
-            "Two fingers move or flick · Scroll",
+            "Two fingers below or above start · Scroll",
             "Two fingers swipe · Back or forward",
             "Point · Move cursor",
             "Pinch while pointing · Click, twice to double click, hold to drag",
@@ -171,6 +182,10 @@ def load_settings():
         s["dictation"] = DEFAULT_SETTINGS["dictation"]
     if s.get("display_mode") not in ("current", "all"):
         s["display_mode"] = DEFAULT_SETTINGS["display_mode"]
+    if s.get("pointer_mode") not in ("relative", "absolute"):
+        s["pointer_mode"] = DEFAULT_SETTINGS["pointer_mode"]
+    if s.get("scroll_mode") not in ("joystick", "drag"):
+        s["scroll_mode"] = DEFAULT_SETTINGS["scroll_mode"]
     return s
 
 
@@ -926,6 +941,16 @@ class CennoApp:
                 app._sync_menu()
             return cb
 
+        def make_engine_mode_cb(setting, key):
+            def cb(icon, item):
+                app.settings[setting] = key
+                save_settings(app.settings)
+                if setting == "pointer_mode":
+                    app.tracker.dispatcher.submit("pointer_end", None)
+                setattr(app.tracker.engine, setting, key)
+                app._sync_menu()
+            return cb
+
         def on_next_display(icon, item):
             if not app.tracker.dispatcher.jump_to_next_display():
                 app._notify(APP_NAME, "Only one display is connected.")
@@ -995,6 +1020,18 @@ class CennoApp:
                      radio=True)
             for key, label in DISPLAY_MODES
         ]
+        pointer_items = [
+            MenuItem(label, make_engine_mode_cb("pointer_mode", key),
+                     checked=lambda item, k=key: app.settings["pointer_mode"] == k,
+                     radio=True)
+            for key, label in POINTER_MODES
+        ]
+        scroll_items = [
+            MenuItem(label, make_engine_mode_cb("scroll_mode", key),
+                     checked=lambda item, k=key: app.settings["scroll_mode"] == k,
+                     radio=True)
+            for key, label in SCROLL_MODES
+        ]
         gesture_items = [MenuItem(line, None, enabled=False)
                          for line in gesture_lines()]
 
@@ -1019,6 +1056,8 @@ class CennoApp:
             MenuItem("Mouse control (point + pinch)",
                      on_toggle_mouse,
                      checked=lambda item: app.settings["mouse"]),
+            MenuItem("Pointer", Menu(*pointer_items)),
+            MenuItem("Scrolling", Menu(*scroll_items)),
             MenuItem("Displays", Menu(
                 *display_items,
                 Menu.SEPARATOR,
@@ -1261,6 +1300,8 @@ class CennoApp:
         # Where the hand reaches: one screen or every screen.
         self.tracker.dispatcher.set_display_mode(
             self.settings.get("display_mode", core.DISPLAY_MODE_CURRENT))
+        self.tracker.engine.pointer_mode = self.settings["pointer_mode"]
+        self.tracker.engine.scroll_mode = self.settings["scroll_mode"]
         self.tracker.start()
 
         self.root = tk.Tk()
