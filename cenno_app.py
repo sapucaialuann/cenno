@@ -223,6 +223,7 @@ class Tracker(threading.Thread):
                                model_complexity=core.MODEL_COMPLEXITY,
                                min_detection_confidence=0.6,
                                min_tracking_confidence=0.5)
+        face_tracker = core.FaceTracker(mp.solutions.face_detection)
         cap = None
         frames, fps_t0 = 0, time.monotonic()
         try:
@@ -271,12 +272,13 @@ class Tracker(threading.Thread):
                 rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 rgb.flags.writeable = False
                 res = hands.process(rgb)
+                face = face_tracker.update(rgb, w, h, now)
 
                 pts = None
                 if res.multi_hand_landmarks:
                     hl = res.multi_hand_landmarks[0]
                     pts = [(p.x * w, p.y * h) for p in hl.landmark]
-                    events = self.engine.update(pts, w, h, now)
+                    events = self.engine.update(pts, w, h, now, face=face)
                 else:
                     hl = None
                     events = self.engine.no_hand(now)
@@ -317,6 +319,7 @@ class Tracker(threading.Thread):
             if cap is not None:
                 cap.release()
             hands.close()
+            face_tracker.close()
 
     def _make_preview(self, cv2, drawing, mp_hands, frame, hl, now):
         """Small preview with status pills, encoded as JPEG for the panel."""
