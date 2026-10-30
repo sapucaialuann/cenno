@@ -1088,6 +1088,9 @@ class Dispatcher:
         if name == "dictation":
             self._toggle_dictation()
             return
+        if name in ("dictation_hold_start", "dictation_hold_end"):
+            self._dictation_hold(name == "dictation_hold_start")
+            return
         if name == "lock" and OS_NAME == "Darwin":
             self._lock_screen()
             return
@@ -1200,6 +1203,12 @@ class Dispatcher:
                 print(f"dictation: sent {self.dictation_shortcut}")
         else:
             self._apple_toggle()
+
+    def _dictation_hold(self, down):
+        """Push-to-talk (hang loose by the head): down=True when the hand
+        arrives, False when it leaves.  Holds the recorded push-to-talk key;
+        with none recorded, toggles dictation on at start and off at end."""
+        raise NotImplementedError
 
     def _apple_toggle(self):
         """Apple Dictation: start from Edit > Start Dictation, stop with Esc."""
@@ -1668,7 +1677,7 @@ ACTION_LABELS_MAC = {
     "overview": "MISSION CONTROL", "app_windows": "APP WINDOWS",
     "close_overview": "CLOSE OVERVIEW", "back": "BACK", "forward": "FORWARD",
     "launcher": "SPOTLIGHT", "lock": "LOCK SCREEN", "volume_up": "VOLUME +", "volume_down": "VOLUME -",
-    "play_pause": "PLAY / PAUSE", "dictation": "DICTATION", "undo": "UNDO", "scroll_drag": "SCROLL", "scroll_fling": "FLICK",
+    "play_pause": "PLAY / PAUSE", "dictation": "DICTATION", "dictation_hold_start": "TALK", "dictation_hold_end": "TALK END", "undo": "UNDO", "scroll_drag": "SCROLL", "scroll_fling": "FLICK",
     "pause_on": "GESTURES PAUSED", "pause_off": "GESTURES ON",
     "click": "CLICK", "mouse_down": "DRAG", "mouse_up": "DROP",
 }
@@ -1677,7 +1686,7 @@ ACTION_LABELS_WIN = {
     "overview": "TASK VIEW", "app_windows": "SHOW DESKTOP",
     "close_overview": "CLOSE TASK VIEW", "back": "BACK", "forward": "FORWARD",
     "launcher": "START MENU", "lock": "LOCK SCREEN", "volume_up": "VOLUME +", "volume_down": "VOLUME -",
-    "play_pause": "PLAY / PAUSE", "dictation": "DICTATION", "undo": "UNDO", "scroll_drag": "SCROLL", "scroll_fling": "FLICK",
+    "play_pause": "PLAY / PAUSE", "dictation": "DICTATION", "dictation_hold_start": "TALK", "dictation_hold_end": "TALK END", "undo": "UNDO", "scroll_drag": "SCROLL", "scroll_fling": "FLICK",
     "pause_on": "GESTURES PAUSED", "pause_off": "GESTURES ON",
     "click": "CLICK", "mouse_down": "DRAG", "mouse_up": "DROP",
 }
