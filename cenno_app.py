@@ -85,7 +85,7 @@ def gesture_lines():
             "Hang loose, hold · Dictation on or off",
             "Hang loose by your ear · Push to talk",
             "Open hand, gather fingertips · Spotlight",
-            "Wave, short strokes side to side · Lock screen",
+            "Wave, short strokes side to side · Lock screen, wave again to wake it",
             "Rock horns, hold · Pause or resume gestures")
 CORNERS = (("top_right", "Top right (default)"), ("top_left", "Top left"),
            ("bottom_right", "Bottom right"), ("bottom_left", "Bottom left"),
@@ -304,6 +304,7 @@ class Tracker(threading.Thread):
                 else:
                     hl = None
                     events = self.engine.no_hand(now)
+                events = self.dispatcher.while_locked(events, now)
 
                 for name, n in events:
                     if name in POINTER_EVENTS and not self.settings["mouse"]:

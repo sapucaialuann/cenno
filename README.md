@@ -60,7 +60,7 @@ Voice Control > Commands > +): phrase "Cenno on", action **Open URL**,
 | Hang loose (hold) | Dictation on / off. Pick Apple Dictation, or a dictation app (Wispr Flow and others) with the shortcut you record in menu bar > Dictation |
 | Hang loose by your ear | Push to talk: Cenno holds your push-to-talk key while the hand is there, and lets go when it leaves. Record the key in the same menu. With no key recorded it turns dictation on, then off |
 | Open hand then gather fingertips | Spotlight |
-| Wave, short strokes side to side | Lock screen |
+| Wave, short strokes side to side | Lock screen; wave again while locked to wake the display |
 | Rock horns (hold 1 s) | Pause / resume gestures (a fist does nothing, so you can rest your hand) |
 
 ## Files
@@ -164,7 +164,7 @@ Cenno on Windows is intentionally Windows-native rather than a macOS clone:
 - **Task View instead of Mission Control.** Swipe up opens Task View (`Win+Tab`), not Mission Control.
 - **Show desktop instead of App windows.** Swipe down shows the desktop (`Win+D`), since Windows has no app-windows overview.
 - **Start menu instead of Spotlight.** Gathering fingertips opens the Start menu (`Win`), not Spotlight.
-- **Lock screen `Win+L`.** Waving locks the screen with `Win+L`.
+- **Lock screen `Win+L`.** Waving locks the screen with `Win+L`. Waving again while locked wakes the display so Windows Hello or a PIN can unlock it.
 - **Undo is `Ctrl+Z`.** Thumbs down sends `Ctrl+Z` (not `Cmd+Z`).
 - **Back / Forward is `Alt+Left/Right`.** Two-finger swipe uses the Windows browser / File Explorer convention.
 - **No Accessibility permission.** Windows has no Accessibility equivalent; the only OS permission is Camera (Settings > Privacy & security > Camera).
@@ -191,7 +191,7 @@ Cenno on Windows is intentionally Windows-native rather than a macOS clone:
 | Hang loose (hold) | Dictation on / off. Pick Windows Voice Typing (Win+H), or a dictation app with the shortcut you record in the tray menu > Dictation |
 | Hang loose by your ear | Push to talk: Cenno holds your push-to-talk key while the hand is there, and lets go when it leaves. Record the key in the same menu. With no key recorded it turns dictation on, then off |
 | Open hand then gather fingertips | Start menu (`Win`) |
-| Wave, short strokes side to side | Lock screen (`Win+L`) |
+| Wave, short strokes side to side | Lock screen (`Win+L`); wave again while locked to wake the display |
 | Rock horns (hold 1 s) | Pause / resume gestures (a fist does nothing, so you can rest your hand) |
 
 ## Files
