@@ -267,6 +267,20 @@ WAVE_COOLDOWN_SECONDS = 3.0    # one lock per wave
 PAUSE_HOLD_SECONDS = 1.0       # rock horns held this long pauses / resumes (0 = off)
 HORNS_THUMB_MAX_SPAN = 0.85    # thumb tip to pinky tip below this = thumb tucked
 
+# --- Face zone (motion gestures are ignored while the hand is at the face) ---
+# Scratching your face or resting your chin on your hand looks like a swipe
+# to the gesture engine, so the face box is a "do not move here" zone.
+# The box is grown by this fraction of its width / height on each side.
+FACE_MARGIN = 0.25
+# The hand counts as "at the face" when at least this share of its 21
+# landmarks is inside the grown box.
+FACE_HAND_SHARE = 0.30
+# The face detector is slower than the hand tracker, so it runs every Nth
+# frame and the last box is reused in between.
+FACE_EVERY_N_FRAMES = 3
+# How long a face box stays valid after the last detection (seconds).
+FACE_KEEP_SECONDS = 0.5
+
 # --- HUD ---
 ACTION_FLASH_SECONDS = 1.0
 
@@ -391,6 +405,23 @@ def classify_pose(pts, palm):
     return "other", feats
 
 
+def near_face(pts, face):
+    """True when the hand is at the user's face.
+
+    `face` is the face box in pixels (x0, y0, x1, y1), or None.  The box is
+    grown by FACE_MARGIN on every side and the hand counts as "at the face"
+    when at least FACE_HAND_SHARE of its 21 landmarks is inside.
+    """
+    if not face:
+        return False
+    x0, y0, x1, y1 = face
+    mx = FACE_MARGIN * max(x1 - x0, 0.0)
+    my = FACE_MARGIN * max(y1 - y0, 0.0)
+    x0, y0, x1, y1 = x0 - mx, y0 - my, x1 + mx, y1 + my
+    inside = sum(1 for x, y in pts if x0 <= x <= x1 and y0 <= y <= y1)
+    return inside >= FACE_HAND_SHARE * len(pts)
+
+
 class OneEuro:
     """One Euro filter (Casiez et al. 2012): the cutoff frequency rises with
     speed, so a still hand is heavily smoothed and a moving one is not."""
@@ -434,6 +465,49 @@ def monotonic_ok(buf, total, axis, noise):
 
 
 # =============================================================================
+# Face zone: where the user's face is, so gestures made there are ignored
+# =============================================================================
+
+class FaceTracker:
+    """Finds the user's face box (pixels) so the engine can ignore motion
+    gestures made while the hand is at the face.
+
+    The detector is slower than the hand tracker, so it runs on every Nth
+    frame and the last box is reused (for FACE_KEEP_SECONDS) in between.
+    update(rgb, w, h, now) returns the box (x0, y0, x1, y1) or None.
+    """
+
+    def __init__(self, mp_face_detection):
+        self.detector = mp_face_detection.FaceDetection(
+            model_selection=0, min_detection_confidence=0.5)
+        self.box = None
+        self.last_seen = -1e9
+        self.count = 0
+
+    def update(self, rgb, w, h, now):
+        self.count += 1
+        if self.count % FACE_EVERY_N_FRAMES == 0:
+            try:
+                res = self.detector.process(rgb)
+            except Exception:
+                res = None
+            dets = getattr(res, "detections", None) if res else None
+            if dets:
+                rb = dets[0].location_data.relative_bounding_box
+                self.box = (rb.xmin * w, rb.ymin * h,
+                            (rb.xmin + rb.width) * w, (rb.ymin + rb.height) * h)
+                self.last_seen = now
+        if self.box is not None and now - self.last_seen <= FACE_KEEP_SECONDS:
+            return self.box
+        return None
+
+    def close(self):
+        if self.detector is not None:
+            self.detector.close()
+            self.detector = None
+
+
+# =============================================================================
 # Gesture engine: landmarks in, abstract events out (no OS / OpenCV calls)
 # =============================================================================
 
@@ -453,12 +527,14 @@ class GestureEngine:
         self._wave_reset()
         self.last_click_time = -1e9
         self.last_click_pos = (0.0, 0.0)
+        self.near_face = False
         self._reset_hand()
 
     # --- state resets ---
     def _reset_hand(self):
         self.ema_c = None
         self.ema_palm = None
+        self.near_face = False
         self.ready_since = None
         self.buf = deque()
         self.armed = True
@@ -528,6 +604,7 @@ class GestureEngine:
         self.edge_votes = 0
         self.edge_dir = None
         self.edge_armed = True
+        self.pointer_live = False
 
     def no_hand(self, now):
         ev = []
@@ -556,7 +633,7 @@ class GestureEngine:
                 ev.append(("scroll_fling", peak))
 
     # --- main step ---
-    def update(self, pts, w, h, now):
+    def update(self, pts, w, h, now, face=None):
         ev = []
         raw_palm = palm_size(pts)
         self.ema_palm = raw_palm if self.ema_palm is None else (
@@ -565,6 +642,14 @@ class GestureEngine:
         palm = min(shape_palm, MOTION_PALM_MAX_FRAC * w)   # motion units
         self.lost_since = None
 
+        # Hand at the face?  Motion gestures are ignored there (scratching
+        # your face looks like a swipe), but hold poses still work.
+        self.near_face = near_face(pts, face)
+        if self.near_face:
+            # Drop the scroll history too, so no flick is fired later on
+            # from a stroke that started before the hand reached the face.
+            self.scroll_hist.clear()
+
         raw_pose, feats = classify_pose(pts, shape_palm)
         if self.pose == "point" and raw_pose != "point":
             # Sticky pointer: a pinch bends the index; don't drop a drag.
@@ -572,7 +657,8 @@ class GestureEngine:
             if (max(r["middle"], r["ring"], r["pinky"]) <= CURLED_RATIO
                     and r["index"] >= POINT_STAY_MIN_RATIO):
                 raw_pose = "point"
-        self.debug = dict(feats, raw=raw_pose, palm=shape_palm, mpalm=palm)
+        self.debug = dict(feats, raw=raw_pose, palm=shape_palm, mpalm=palm,
+                          face=self.near_face)
 
         # Pose stability filter.
         if raw_pose == self.raw_pose:
@@ -591,6 +677,7 @@ class GestureEngine:
             self.buf.clear()
             self._reset_pose_state()
             if (raw_pose == "gather"
+                    and not self.near_face
                     and now - self.last_open_time <= GATHER_FROM_OPEN_WINDOW
                     and now - self.last_launcher > LAUNCHER_COOLDOWN_SECONDS):
                 ev.append(("launcher", 1))
@@ -677,6 +764,13 @@ class GestureEngine:
             else:
                 self.knob_angle += KNOB_ANGLE_ALPHA * wrap180(ang - self.knob_angle)
                 delta = (self.knob_angle - self.knob_ref) * VOLUME_DIRECTION
+                if self.near_face:
+                    # Twisting at the face does nothing: re-base the knob so
+                    # the twist does not fire all at once when the hand
+                    # comes back out of the face box.
+                    self.knob_ref = self.knob_angle
+                    self.knob_started = False
+                    delta = 0.0
                 if not self.knob_started:
                     # First notch needs a little extra twist, so forming
                     # the OK sign itself never nudges the volume.
@@ -695,16 +789,20 @@ class GestureEngine:
             self.debug["knob"] = (self.knob_angle - self.knob_ref) * VOLUME_DIRECTION
 
         # Mouse pointer.
-        if self.pose == "point":
+        if self.pose == "point" and not self.near_face:
             self._pointer_step(pts, w, h, now, feats["pinch"],
                                feats["ratios"]["index"], ev)
+        elif self.near_face and self.pointer_live:
+            # The hand went to the face: end the pointer cleanly, so no
+            # cursor is left running behind the user's face.
+            self._pointer_end(ev)
 
         # Two-finger scroll: drag follows the hand, flicks glide.
-        if self.pose == "two" and warmed and step is not None:
+        if self.pose == "two" and warmed and step is not None and not self.near_face:
             self._scroll_step(step, now, ev, cy, palm)
 
         # Wave: open hand side to side a few times -> lock screen.
-        if self.pose == "open" and warmed:
+        if self.pose == "open" and warmed and not self.near_face:
             if self._wave_step(cx / palm, now):
                 ev.append(("lock", 1))
                 self.buf.clear()
@@ -715,6 +813,11 @@ class GestureEngine:
 
         # Swipes (open hand: 4 directions; two fingers: horizontal nav).
         family = self.pose if self.pose in ("open", "two") else None
+        if self.near_face:
+            # Motion made at the face must not carry over once the hand
+            # leaves it, so the buffer is dropped every frame in there.
+            family = None
+            self.buf.clear()
         cutoff = now - SWIPE_BUFFER_SECONDS
         if family and warmed:
             self.buf.append((cx, cy, now))
@@ -835,6 +938,7 @@ class GestureEngine:
             self.cursor_hist.popleft()
         ev.append(("pointer_move", target))
         self.debug["pointer"] = (target, self.pinched, self.dragging)
+        self.pointer_live = True
 
     def _rebase_offset(self, mapped):
         """Keep the cursor where it is when it un-freezes."""
@@ -845,6 +949,7 @@ class GestureEngine:
         if self.pinched and self.dragging:
             ev.append(("mouse_up", self.cursor))
         ev.append(("pointer_end", None))
+        self.pointer_live = False
 
     def _scroll_step(self, step, now, ev, cy=None, palm=None):
         if self.scroll_mode == "joystick":
@@ -1778,6 +1883,7 @@ def main():
                            model_complexity=MODEL_COMPLEXITY,
                            min_detection_confidence=0.6,
                            min_tracking_confidence=0.5)
+    face_tracker = FaceTracker(mp.solutions.face_detection)
     engine = GestureEngine()
     dispatcher = Dispatcher()
 
@@ -1818,12 +1924,13 @@ def main():
             rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             rgb.flags.writeable = False
             results = hands.process(rgb)
+            face = face_tracker.update(rgb, w, h, now)
 
             if results.multi_hand_landmarks:
                 hl = results.multi_hand_landmarks[0]
                 mp_drawing.draw_landmarks(frame, hl, mp_hands.HAND_CONNECTIONS)
                 pts = [(p.x * w, p.y * h) for p in hl.landmark]
-                events = engine.update(pts, w, h, now)
+                events = engine.update(pts, w, h, now, face=face)
                 if engine.pose == "point":
                     # Show the area that maps to the whole screen.
                     x0, y0, x1, y1 = POINTER_BOX
@@ -1920,6 +2027,7 @@ def main():
         cap.release()
         cv2.destroyAllWindows()
         hands.close()
+        face_tracker.close()
 
 
 if __name__ == "__main__":
