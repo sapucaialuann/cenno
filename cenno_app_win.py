@@ -999,16 +999,16 @@ class CennoApp:
         ]
         def app_shortcut_text(item):
             sc = app.settings["dictation_toggle"]
-            return (f"Dictation app shortcut: {sc['label']}" if sc
+            return (f"Dictation app shortcut: {shortcuts.menu_label(sc, 'Windows')}" if sc
                     else "Dictation app (record shortcut)...")
 
         def toggle_text(item):
             sc = app.settings["dictation_toggle"]
-            return ("Record toggle shortcut... " + (f"({sc['label']})" if sc else "")).strip()
+            return ("Record toggle shortcut... " + (f"({shortcuts.menu_label(sc, 'Windows')})" if sc else "")).strip()
 
         def ptt_text(item):
             sc = app.settings["dictation_ptt"]
-            return f"Record push-to-talk key... ({sc['label'] if sc else 'none: toggles'})"
+            return f"Record push-to-talk key... ({shortcuts.menu_label(sc, 'Windows') if sc else 'none: toggles'})"
 
         dictation_items = [
             MenuItem("Windows Voice Typing (Win+H)", on_use_winvoice,
@@ -1166,7 +1166,8 @@ class CennoApp:
             self.root, "Press the toggle shortcut now...", self._effective_dark(),
             reject=lambda sc: ("That's already your push-to-talk key."
                                if shortcuts.same(sc, self.settings["dictation_ptt"])
-                               else None))
+                               else None),
+            warn=lambda sc: shortcuts.clash_message(sc, "Windows"))
         if sc:
             self.settings["dictation_toggle"] = sc
             self.settings["dictation"] = "shortcut"
@@ -1177,7 +1178,8 @@ class CennoApp:
             self.root, "Press the push-to-talk key now...", self._effective_dark(),
             reject=lambda sc: ("That's already your toggle shortcut."
                                if shortcuts.same(sc, self.settings["dictation_toggle"])
-                               else None))
+                               else None),
+            warn=lambda sc: shortcuts.clash_message(sc, "Windows"))
         if sc:
             self.tracker.dispatcher.release_dictation()
             self.settings["dictation_ptt"] = sc

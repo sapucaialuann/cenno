@@ -706,14 +706,19 @@ class CennoApp(rumps.App):
         """Dictation menu texts and checks, and the dispatcher's copy."""
         mode = self.settings["dictation"]
         toggle, ptt = self.settings["dictation_toggle"], self.settings["dictation_ptt"]
+        hotkeys = shortcuts.read_mac_hotkeys()
+
+        def shown(sc):
+            return shortcuts.menu_label(sc, "Darwin", hotkeys)
+
         self.apple_item.state = int(mode == "apple")
         self.app_item.state = int(mode == "shortcut")
-        self.app_item.title = (f"Dictation app shortcut: {toggle['label']}" if toggle
+        self.app_item.title = (f"Dictation app shortcut: {shown(toggle)}" if toggle
                                else "Dictation app (record shortcut)...")
-        self.toggle_item.title = (f"Record toggle shortcut... ({toggle['label']})"
+        self.toggle_item.title = (f"Record toggle shortcut... ({shown(toggle)})"
                                   if toggle else "Record toggle shortcut...")
         self.ptt_item.title = ("Record push-to-talk key... "
-                               f"({ptt['label'] if ptt else 'none: toggles'})")
+                               f"({shown(ptt) if ptt else 'none: toggles'})")
         try:
             if ptt and self.clear_ptt_item.title not in self.dictation_menu:
                 self.dictation_menu.add(self.clear_ptt_item)
@@ -953,7 +958,9 @@ class CennoApp(rumps.App):
     def _record(self, title, other, clash):
         """Ask for a shortcut until it differs from `other`; None on cancel."""
         while True:
-            sc = recorder_mac.record_shortcut(title)
+            hotkeys = shortcuts.read_mac_hotkeys()
+            sc = recorder_mac.record_shortcut(
+                title, warn=lambda s: shortcuts.clash_message(s, "Darwin", hotkeys))
             if sc and shortcuts.same(sc, other):
                 rumps.alert(APP_NAME, clash)
                 continue

@@ -186,6 +186,110 @@ def migrate_dictation(settings, os_name, wispr_installed=False):
     return s
 
 
+# --- clashes with the system ----------------------------------------------
+# macOS keeps its own shortcuts in com.apple.symbolichotkeys, by number:
+# {"60": {"enabled": True, "value": {"parameters": [char, code, flags]}}}.
+# An entry with no parameters (or no entry) means the default keys below.
+MAC_FLAG_BITS = {"shift": 1 << 17, "ctrl": 1 << 18, "alt": 1 << 19,
+                 "cmd": 1 << 20, "fn": 1 << 23}
+MAC_SYSTEM_SHORTCUTS = {   # number: (name, default parameters)
+    "28": ("Save picture of screen as a file", (51, 20, 1179648)),
+    "29": ("Copy picture of screen to the clipboard", (51, 20, 1441792)),
+    "30": ("Save picture of selected area as a file", (52, 21, 1179648)),
+    "31": ("Copy picture of selected area to the clipboard", (52, 21, 1441792)),
+    "184": ("Screenshot and recording options", (53, 23, 1179648)),
+    "32": ("Mission Control", (65535, 126, 8650752)),
+    "33": ("Application windows", (65535, 125, 8650752)),
+    "36": ("Show Desktop", (65535, 103, 8388608)),
+    "60": ("Select the previous input source", (32, 49, 262144)),
+    "61": ("Select next source in Input menu", (32, 49, 786432)),
+    "64": ("Show Spotlight search", (32, 49, 1048576)),
+    "65": ("Show Finder search window", (32, 49, 1572864)),
+    "79": ("Move left a space", (65535, 123, 8650752)),
+    "81": ("Move right a space", (65535, 124, 8650752)),
+}
+
+# Windows combos the system keeps for itself: (mods, VK) -> (what it does,
+# whether an app can send it at all).
+WIN_RESERVED = {
+    (frozenset({"win"}), 0x4C): ("locks the PC", False),
+    (frozenset({"ctrl", "alt"}), 0x2E): ("opens the security screen", False),
+    (frozenset({"win"}), None): ("opens the Start menu", True),
+    (frozenset({"win"}), 0x44): ("shows the desktop", True),
+    (frozenset({"win"}), 0x45): ("opens File Explorer", True),
+    (frozenset({"win"}), 0x52): ("opens Run", True),
+    (frozenset({"win"}), 0x09): ("opens Task View", True),
+    (frozenset({"win"}), 0x20): ("switches the input language", True),
+    (frozenset({"win"}), 0x48): ("starts Windows Voice Typing (pick that option "
+                                 "in the menu instead)", True),
+    (frozenset({"alt"}), 0x09): ("switches windows", True),
+    (frozenset({"alt"}), 0x73): ("closes the window", True),
+    (frozenset({"ctrl", "shift"}), 0x1B): ("opens Task Manager", True),
+    (frozenset({"ctrl", "win"}), 0x25): ("switches desktops", True),
+    (frozenset({"ctrl", "win"}), 0x27): ("switches desktops", True),
+}
+
+
+def read_mac_hotkeys():
+    """macOS's own shortcut settings, or {} when they can't be read."""
+    try:
+        import Foundation
+        d = Foundation.CFPreferencesCopyAppValue(
+            "AppleSymbolicHotKeys", "com.apple.symbolichotkeys")
+        return {str(k): v for k, v in (d or {}).items()}
+    except Exception as exc:
+        print(f"WARN: could not read the macOS keyboard shortcuts: {exc}")
+        return {}
+
+
+def mac_system_clash(sc, hotkeys):
+    """Name of the switched-on macOS shortcut that uses the same keys, or
+    None.  fn is ignored: macOS adds it to arrow and F-keys by itself."""
+    if not is_valid(sc) or sc["code"] is None:
+        return None
+    want = sum(MAC_FLAG_BITS[m] for m in sc["mods"] if m in MAC_FLAG_BITS)
+    fn = MAC_FLAG_BITS["fn"]
+    for num in set(hotkeys) | set(MAC_SYSTEM_SHORTCUTS):
+        entry = hotkeys.get(num) or {}
+        name, default = MAC_SYSTEM_SHORTCUTS.get(num, ("a macOS keyboard shortcut", None))
+        if not entry.get("enabled", default is not None):
+            continue
+        params = list((entry.get("value") or {}).get("parameters") or []) or default
+        if not params or len(params) < 3:
+            continue
+        if params[1] == sc["code"] and (params[2] & ~fn) == (want & ~fn):
+            return name
+    return None
+
+
+def clash_message(sc, os_name, hotkeys=None):
+    """A warning to show while recording when the system already uses this
+    shortcut, or None."""
+    if not is_valid(sc):
+        return None
+    if os_name == "Darwin":
+        name = mac_system_clash(sc, hotkeys or {})
+        if name:
+            return (f"macOS uses {sc['label']} for \u201c{name}\u201d, so Cenno's "
+                    f"{sc['label']} would do that instead of reaching your "
+                    "dictation app. Turn it off in System Settings > Keyboard > "
+                    "Keyboard Shortcuts, or press another.")
+        return None
+    hit = WIN_RESERVED.get((frozenset(sc["mods"]), sc["code"]))
+    if hit:
+        what, sendable = hit
+        if not sendable:
+            return f"Windows keeps {sc['label']} for itself (it {what}). No app can send it. Press another."
+        return f"In Windows {sc['label']} {what}, so Cenno's {sc['label']} would do that too. Press another unless your dictation app took it over."
+    return None
+
+
+def menu_label(sc, os_name, hotkeys=None):
+    """The shortcut's label for a menu, flagged when the system uses it."""
+    clash = clash_message(sc, os_name, hotkeys)
+    return sc["label"] + (" \u26a0\ufe0e used by the system" if clash else "")
+
+
 def escape():
     """The Esc key (macOS code), which stops Apple Dictation."""
     return make([], 53, "Esc")

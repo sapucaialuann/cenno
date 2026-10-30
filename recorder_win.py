@@ -159,9 +159,11 @@ class _Hook:
             self.handle = None
 
 
-def record_shortcut(root, title="Press the shortcut now...", dark=True, reject=None):
+def record_shortcut(root, title="Press the shortcut now...", dark=True, reject=None,
+                    warn=None):
     """Show the window and wait.  `reject(sc)` may return a message (the
-    shortcut is refused and the person presses again) or None to accept."""
+    shortcut is refused and the person presses again) or None to accept.
+    `warn(sc)` may return a message shown while it can still be saved."""
     paper = theme.hex_of("paper", dark)
     ink = theme.hex_of("ink", dark)
     muted = theme.hex_of("ink-muted", dark)
@@ -178,8 +180,9 @@ def record_shortcut(root, title="Press the shortcut now...", dark=True, reject=N
              font=theme.type_font("display", "title")).pack(pady=theme.SPACE[3])
     note = tk.StringVar(value="Press the keys together, or just modifiers.\n"
                               "Esc on its own cancels.")
-    tk.Label(inner, textvariable=note, bg=paper, fg=muted, justify="center",
-             font=theme.type_font("sans", "body-sm")).pack()
+    note_label = tk.Label(inner, textvariable=note, bg=paper, fg=muted, justify="center",
+                          wraplength=320, font=theme.type_font("sans", "body-sm"))
+    note_label.pack()
 
     state = {"sc": None, "done": False}
     keys = KeyState(key_name=_vk_name)
@@ -224,7 +227,9 @@ def record_shortcut(root, title="Press the shortcut now...", dark=True, reject=N
                 note.set(message)
                 return
             state["sc"] = value
-            note.set("Press again to change it, or Save.")
+            message = warn(value) if warn else None
+            note.set(message or "Press again to change it, or Save.")
+            note_label.configure(fg=theme.hex_of("ember", dark) if message else muted)
             shown.set(value["label"])
             save_button.configure(state=tk.NORMAL)
         elif kind == "release" and state["sc"]:

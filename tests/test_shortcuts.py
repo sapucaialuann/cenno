@@ -343,6 +343,60 @@ def test_release_works_even_if_the_ptt_key_was_cleared_meanwhile():
         assert rec.calls == [("hold", "fn", True), ("hold", "fn", False)]
 
 
+# --- clashes with system shortcuts ---
+
+CTRL_SPACE = sc.make(["ctrl"], 49, "⌃Space")
+
+
+def test_mac_clash_with_switched_on_shortcut():
+    hotkeys = {"60": {"enabled": True, "value": {"parameters": [32, 49, 262144]}}}
+    assert sc.mac_system_clash(CTRL_SPACE, hotkeys) == "Select the previous input source"
+    msg = sc.clash_message(CTRL_SPACE, "Darwin", hotkeys)
+    assert "⌃Space" in msg and "System Settings" in msg
+
+
+def test_mac_no_clash_when_switched_off():
+    hotkeys = {"60": {"enabled": False, "value": {"parameters": [32, 49, 262144]}}}
+    assert sc.mac_system_clash(CTRL_SPACE, hotkeys) is None
+    assert sc.clash_message(CTRL_SPACE, "Darwin", hotkeys) is None
+
+
+def test_mac_missing_entry_means_the_default_keys():
+    # Spotlight is on by default even when the settings don't list it.
+    assert sc.mac_system_clash(sc.make(["cmd"], 49, "⌘Space"), {}) \
+        == "Show Spotlight search"
+    # An entry with no parameters keeps the default keys (⌃← moves a space;
+    # macOS adds fn to arrow keys by itself).
+    hotkeys = {"79": {"enabled": True, "value": {"parameters": []}}}
+    assert sc.mac_system_clash(sc.make(["ctrl"], 123, "⌃←"), hotkeys) \
+        == "Move left a space"
+
+
+def test_mac_unknown_entry_and_no_clash():
+    hotkeys = {"999": {"enabled": True, "value": {"parameters": [100, 2, 786432]}}}
+    assert sc.mac_system_clash(sc.make(["ctrl", "alt"], 2, "⌃⌥D"), hotkeys) \
+        == "a macOS keyboard shortcut"
+    assert sc.mac_system_clash(sc.make(["ctrl", "alt"], 3, "⌃⌥F"), hotkeys) is None
+    # Modifier-only push-to-talk keys never clash.
+    assert sc.mac_system_clash(sc.make(["fn"], None, "fn"), {}) is None
+
+
+def test_windows_reserved():
+    lock = sc.make(["win"], 0x4C, "Win+L")
+    assert "No app can send it" in sc.clash_message(lock, "Windows")
+    desk = sc.make(["win"], 0x44, "Win+D")
+    assert "shows the desktop" in sc.clash_message(desk, "Windows")
+    ok = sc.make(["ctrl", "shift"], 0x44, "Ctrl+Shift+D")
+    assert sc.clash_message(ok, "Windows") is None
+
+
+def test_menu_label_flags_clashes():
+    hotkeys = {"60": {"enabled": True, "value": {"parameters": [32, 49, 262144]}}}
+    assert sc.menu_label(CTRL_SPACE, "Darwin", hotkeys).startswith("⌃Space ")
+    assert "system" in sc.menu_label(CTRL_SPACE, "Darwin", hotkeys)
+    assert sc.menu_label(CTRL_SPACE, "Darwin", {"60": {"enabled": False}}) == "⌃Space"
+
+
 if __name__ == "__main__":
     failures = 0
     for name, fn in sorted(globals().items()):

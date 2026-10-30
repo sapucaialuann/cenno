@@ -91,22 +91,25 @@ def _system_shortcuts(mode=None):
         return None
 
 
-def record_shortcut(title="Press the shortcut now..."):
+def record_shortcut(title="Press the shortcut now...", warn=None):
+    """`warn(sc)` may return a message shown under the shortcut (it can
+    still be saved), such as a clash with a macOS shortcut."""
     app = AppKit.NSApplication.sharedApplication()
     state = {"sc": None, "peak": set(), "typed": False}
 
     panel = AppKit.NSPanel.alloc().initWithContentRect_styleMask_backing_defer_(
-        ((0, 0), (360, 170)), AppKit.NSWindowStyleMaskTitled,
+        ((0, 0), (360, 220)), AppKit.NSWindowStyleMaskTitled,
         AppKit.NSBackingStoreBuffered, False)
     panel.setTitle_("Cenno")
     panel.setReleasedWhenClosed_(False)
     panel.setLevel_(AppKit.NSFloatingWindowLevel)
     view = panel.contentView()
-    view.addSubview_(_label(title, ((20, 128), (320, 22)), 14, bold=True))
-    shown = _label("", ((20, 80), (320, 34)), 24)
+    view.addSubview_(_label(title, ((20, 178), (320, 22)), 14, bold=True))
+    shown = _label("", ((20, 130), (320, 34)), 24)
     view.addSubview_(shown)
-    hint = _label("Press the keys together, or just one modifier such as fn.\n"
-                  "Esc on its own cancels.", ((20, 44), (320, 32)), 11)
+    HINT = ("Press the keys together, or just one modifier such as fn.\n"
+            "Esc on its own cancels.")
+    hint = _label(HINT, ((20, 46), (320, 76)), 11)
     hint.setTextColor_(AppKit.NSColor.secondaryLabelColor())
     view.addSubview_(hint)
 
@@ -133,6 +136,10 @@ def record_shortcut(title="Press the shortcut now..."):
         state["sc"] = sc
         save.setEnabled_(True)
         show(sc)
+        message = warn(sc) if warn else None
+        hint.setStringValue_(message or HINT)
+        hint.setTextColor_(AppKit.NSColor.systemOrangeColor() if message
+                           else AppKit.NSColor.secondaryLabelColor())
 
     def on_event(event):
         flags = event.modifierFlags()
