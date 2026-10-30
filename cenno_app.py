@@ -61,8 +61,8 @@ def gesture_lines():
     """Menu list in the 'Gesture · Action' pattern (swipe direction follows
     the engine's natural-swipe setting)."""
     prev_dir, next_dir = ("right", "left") if core.NATURAL_SWIPE else ("left", "right")
-    return (f"Swipe {prev_dir} · Previous Space",
-            f"Swipe {next_dir} · Next Space",
+    return (f"Slap {prev_dir} · Previous Space",
+            f"Slap {next_dir} · Next Space",
             "Swipe up · Mission Control",
             "Swipe down · App windows, then close",
             "Two fingers move or flick · Scroll",
@@ -75,7 +75,7 @@ def gesture_lines():
             "Thumb left or right · Arrow key, hold to repeat",
             "Hang loose, hold · Dictation on or off",
             "Open hand, gather fingertips · Spotlight",
-            "Wave, open hand side to side · Lock screen",
+            "Wave, short strokes side to side · Lock screen",
             "Rock horns, hold · Pause or resume gestures")
 CORNERS = (("top_right", "Top right (default)"), ("top_left", "Top left"),
            ("bottom_right", "Bottom right"), ("bottom_left", "Bottom left"),
