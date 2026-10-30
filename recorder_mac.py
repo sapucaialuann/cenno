@@ -70,10 +70,11 @@ def _label(text, frame, size, bold=False, center=True):
 
 
 def _system_shortcuts(mode=None):
-    """Read, or set, whether macOS handles its own shortcuts (⌘Space for
-    Spotlight and the like) before apps see them: 0 on, 1 off.  Recording
-    turns them off, as the shortcut fields in System Settings do, or ⌘Space
-    would open Spotlight and only ⌘ would be recorded.  None if unavailable."""
+    """Read, or set, whether macOS handles its own shortcuts (⌃Space for
+    input sources, ⌘Space for Spotlight and the like) before apps see them:
+    0 on, 1 off.  Recording turns them off, as the shortcut fields in System
+    Settings do, or the system would take the key and only the modifiers
+    would be recorded.  None if unavailable."""
     import ctypes
     try:
         cg = ctypes.CDLL("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics")
