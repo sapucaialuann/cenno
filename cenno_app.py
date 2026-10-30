@@ -693,6 +693,10 @@ class CennoApp(rumps.App):
                                 callback=lambda _: os.system(f"open '{SUPPORT_URL}'")),
                  rumps.MenuItem(f"About {APP_NAME} {VERSION}", callback=self.show_about),
                  rumps.MenuItem("Quit Cenno", callback=self.quit_app, key="q")]
+        # rumps only adds to the menu it already has, so a rebuild (a screen
+        # plugged in or out) failed halfway with "already in another menu"
+        # and dropped everything after the Displays submenu, Dictation too.
+        self.menu.clear()
         self.menu = menu
 
     def _sync_display_menu(self):
