@@ -6,17 +6,18 @@ FaceTracker touches mediapipe, and only when it is first used.
 """
 
 # --- Head zone (all relative to the detected face box) ---
-HEAD_SIDE_REACH = 1.0         # hand centre at most this far (face widths) beyond the face's side edge
-HEAD_MIN_SIDE_OFFSET = 0.35   # ...and at least this far (face widths) from the face centre
-HEAD_TOP_MARGIN = 0.3         # zone starts this far above the face top (face heights)
-HEAD_BOTTOM_MARGIN = 0.6      # ...and ends this far below the chin (face heights)
+# Held like a phone: the thumb tip at the ear, the pinky below it towards the
+# mouth.  A hang loose shown to the camera has the pinky up and the thumb out
+# to the side, so the thumb-above-pinky test is what tells the two apart.
+HEAD_EAR_INSIDE = 0.25        # thumb tip at most this far (face widths) inside the face's side edge
+HEAD_EAR_OUTSIDE = 0.6        # ...or this far outside it
+HEAD_EAR_TOP = 0.15           # ear band starts this far above the face top (face heights)
+HEAD_EAR_BOTTOM = 0.75        # ...and ends this far down the face (face heights)
+HEAD_UPRIGHT = 0.5            # pinky tip below the thumb tip by this share of their distance
 HEAD_PALM_RATIO_MIN = 0.35    # palm / face width; smaller = hand far behind the head
 HEAD_PALM_RATIO_MAX = 1.6     # larger = hand much closer to the camera than the head
 FACE_MEMORY_SECONDS = 0.6     # keep the last face box this long when detection drops out
 FACE_MIN_CONFIDENCE = 0.5
-
-PALM_POINTS = (0, 5, 9, 13, 17)     # wrist + knuckles: the hand centre
-
 
 def face_box_from_detection(detection, w, h):
     """Pixel box (x0, y0, x1, y1) of a mediapipe face detection, or None."""
@@ -31,26 +32,37 @@ def face_box_from_detection(detection, w, h):
     return (x0, y0, x1, y1)
 
 
-def near_head(pts, palm, face):
-    """True when the hand (21 landmarks in px, palm size in px) is beside the
-    head: at ear or cheek height, off to one side, and about as far from the
-    camera as the face."""
+def head_check(pts, palm, face):
+    """(near, why): is the hand (21 landmarks in px, palm size in px) held
+    like a phone by the ear?  `why` names the first test that failed, with
+    the measurement, so the log shows what to tune."""
     if face is None:
-        return False
+        return False, "no face"
     x0, y0, x1, y1 = face
     fw, fh = x1 - x0, y1 - y0
     if fw <= 0 or fh <= 0:
-        return False
-    hx = sum(pts[i][0] for i in PALM_POINTS) / len(PALM_POINTS)
-    hy = sum(pts[i][1] for i in PALM_POINTS) / len(PALM_POINTS)
-    offset = abs(hx - (x0 + x1) / 2)
-    if offset < HEAD_MIN_SIDE_OFFSET * fw:
-        return False                         # in front of the face
-    if offset - fw / 2 > HEAD_SIDE_REACH * fw:
-        return False                         # too far out to the side
-    if not (y0 - HEAD_TOP_MARGIN * fh <= hy <= y1 + HEAD_BOTTOM_MARGIN * fh):
-        return False
-    return HEAD_PALM_RATIO_MIN <= palm / fw <= HEAD_PALM_RATIO_MAX
+        return False, "no face"
+    (tx, ty), (px, py) = pts[4], pts[20]
+    span = ((px - tx) ** 2 + (py - ty) ** 2) ** 0.5 or 1.0
+    upright = (py - ty) / span
+    if upright < HEAD_UPRIGHT:
+        return False, f"not held like a phone (upright {upright:+.2f})"
+    right = tx > (x0 + x1) / 2
+    out = (tx - x1 if right else x0 - tx) / fw    # beyond the side edge
+    if not -HEAD_EAR_INSIDE <= out <= HEAD_EAR_OUTSIDE:
+        return False, f"thumb not at the ear (side {out:+.2f})"
+    down = (ty - y0) / fh                          # from the face top
+    if not -HEAD_EAR_TOP <= down <= HEAD_EAR_BOTTOM:
+        return False, f"thumb not at ear height (height {down:+.2f})"
+    ratio = palm / fw
+    if not HEAD_PALM_RATIO_MIN <= ratio <= HEAD_PALM_RATIO_MAX:
+        return False, f"hand not beside the head (palm/face {ratio:.2f})"
+    return True, f"by the ear (upright {upright:+.2f}, side {out:+.2f}, height {down:+.2f})"
+
+
+def near_head(pts, palm, face):
+    """True when the hand is held like a phone by the ear."""
+    return head_check(pts, palm, face)[0]
 
 
 class FaceTracker:

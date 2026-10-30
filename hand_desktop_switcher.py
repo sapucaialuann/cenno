@@ -597,10 +597,11 @@ class GestureEngine:
 
         # Hang loose beside the head (push-to-talk) vs anywhere else (toggle).
         if self.pose == "shaka":
-            near = headzone.near_head(pts, shape_palm, face)
+            near, why = headzone.head_check(pts, shape_palm, face)
             self.head_votes = self.head_votes + 1 if near else 0
             self.head_away = 0 if near else self.head_away + 1
             self.debug["head"] = near
+            self.debug["head_why"] = why
             self.debug["face"] = face
             if self.ptt_active and (self.head_away >= HEAD_LEAVE_FRAMES
                                     or now - self.ptt_since >= PTT_MAX_SECONDS):
@@ -623,12 +624,14 @@ class GestureEngine:
             elif (self.pose == "shaka" and held >= PTT_HOLD_SECONDS
                   and self.head_votes >= HEAD_STABLE_FRAMES and not self.paused):
                 ev.append(("dictation_hold_start", 1))
+                print(f"hang loose: push to talk, {self.debug.get('head_why')}")
                 self.ptt_active, self.ptt_since = True, now
                 self.head_away = 0
                 self.latched = True
             elif (self.pose == "shaka" and held >= SHAKA_HOLD_SECONDS
                   and self.head_votes == 0):
                 ev.append(("dictation", 1))
+                print(f"hang loose: toggle, {self.debug.get('head_why')}")
                 self.latched = True
 
         # Thumb left / right: arrow key now, again after a pause, then

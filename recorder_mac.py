@@ -69,6 +69,27 @@ def _label(text, frame, size, bold=False, center=True):
     return field
 
 
+def _system_shortcuts(mode=None):
+    """Read, or set, whether macOS handles its own shortcuts (⌘Space for
+    Spotlight and the like) before apps see them: 0 on, 1 off.  Recording
+    turns them off, as the shortcut fields in System Settings do, or ⌘Space
+    would open Spotlight and only ⌘ would be recorded.  None if unavailable."""
+    import ctypes
+    try:
+        cg = ctypes.CDLL("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics")
+        cid = cg.CGSMainConnectionID()
+        if mode is not None:
+            cg.CGSSetGlobalHotKeyOperatingMode(cid, mode)
+            return mode
+        out = ctypes.c_int(0)
+        if cg.CGSGetGlobalHotKeyOperatingMode(cid, ctypes.byref(out)) != 0:
+            return None
+        return out.value
+    except (OSError, AttributeError) as exc:
+        print(f"WARN: could not pause system shortcuts while recording: {exc}")
+        return None
+
+
 def record_shortcut(title="Press the shortcut now..."):
     app = AppKit.NSApplication.sharedApplication()
     state = {"sc": None, "peak": set(), "typed": False}
@@ -144,12 +165,17 @@ def record_shortcut(title="Press the shortcut now..."):
 
     mask = AppKit.NSEventMaskKeyDown | AppKit.NSEventMaskFlagsChanged
     monitor = AppKit.NSEvent.addLocalMonitorForEventsMatchingMask_handler_(mask, on_event)
+    before = _system_shortcuts()
+    if before is not None:
+        _system_shortcuts(1)
     try:
         app.activateIgnoringOtherApps_(True)
         panel.center()
         panel.makeKeyAndOrderFront_(None)
         result = app.runModalForWindow_(panel)
     finally:
+        if before is not None:
+            _system_shortcuts(before)
         AppKit.NSEvent.removeMonitor_(monitor)
         panel.orderOut_(None)
     return state["sc"] if result == 1 else None

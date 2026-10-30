@@ -41,6 +41,20 @@ def shaka(hx, hy, scale=1.0):
     return [(x - cx + hx, y - cy + hy) for x, y in p]
 
 
+def phone(tx, ty, side="right", scale=1.0, turn=135):
+    """Hang loose held like a phone: the shaka turned so the thumb points up
+    and the pinky down, with the thumb tip at (tx, ty).  side="left" mirrors
+    it for the other ear."""
+    import math
+    a = math.radians(turn)
+    p = [(x * math.cos(a) - y * math.sin(a), x * math.sin(a) + y * math.cos(a))
+         for x, y in shaka(0, 0, scale)]
+    if side == "left":
+        p = [(-x, y) for x, y in p]
+    dx, dy = tx - p[4][0], ty - p[4][1]
+    return [(x + dx, y + dy) for x, y in p]
+
+
 def open_hand(hx, hy):
     """Same hand with the three middle fingers straightened."""
     pts = shaka(hx, hy)
@@ -62,25 +76,39 @@ def test_shaka_fixture_is_shaka():
     assert core.classify_pose(pts, palm(pts))[0] != "shaka"
 
 
-def test_near_head_beside_ears():
-    for hx in (450, 190):                       # right and left of the face
-        pts = shaka(hx, 170)
-        assert headzone.near_head(pts, palm(pts), FACE), hx
+def test_phone_fixture_is_shaka():
+    for side in ("right", "left"):
+        pts = phone(390, 150, side)
+        assert core.classify_pose(pts, palm(pts))[0] == "shaka", side
+        assert pts[4][1] < pts[20][1], "thumb above pinky"
+
+
+def test_near_head_like_a_phone():
+    # FACE is x 270..370, y 100..230: the thumb at either ear.
+    for tx, side in ((390, "right"), (250, "left"), (360, "right")):
+        pts = phone(tx, 150, side)
+        ok, why = headzone.head_check(pts, palm(pts), FACE)
+        assert ok, (tx, side, why)
 
 
 def test_near_head_rejects():
     cases = {
-        "in front of face": shaka(320, 170),
-        "in front of chest": shaka(320, 330),
-        "far to the side": shaka(600, 170),
-        "beside the chest": shaka(450, 380),
-        "above the head": shaka(450, 20),
+        # The misfire people hit: a hang loose shown to the camera, next to
+        # the face.  Pinky up, thumb sideways: not a phone.
+        "upright shaka beside the face": shaka(450, 170),
+        "upright shaka beside the face, left": shaka(190, 170),
+        "upright shaka in front of the face": shaka(320, 170),
+        "upright shaka in front of the chest": shaka(320, 330),
+        "phone hold in front of the face": phone(320, 150),
+        "phone hold far to the side": phone(470, 150),
+        "phone hold at the chest": phone(390, 330),
+        "phone hold above the head": phone(390, 40),
+        "phone hold, much closer to the camera": phone(390, 150, scale=2.5),
     }
     for name, pts in cases.items():
-        assert not headzone.near_head(pts, palm(pts), FACE), name
-    pts = shaka(450, 170, scale=2.5)            # hand much closer to the camera
-    assert not headzone.near_head(pts, palm(pts), FACE), "too close"
-    pts = shaka(450, 170)
+        ok, why = headzone.head_check(pts, palm(pts), FACE)
+        assert not ok, (name, why)
+    pts = phone(390, 150)
     assert not headzone.near_head(pts, palm(pts), None), "no face"
 
 
@@ -128,7 +156,7 @@ class Run:
         self.log.extend(name for name, _ in events)
 
 
-BESIDE = shaka(450, 170)
+BESIDE = phone(390, 150)
 AWAY = shaka(320, 330)
 STARTED_ENDED = ["dictation_hold_start", "dictation_hold_end"]
 
