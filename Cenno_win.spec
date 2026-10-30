@@ -52,6 +52,8 @@ datas += [("assets", "assets")]
 hiddenimports += [
     "hand_desktop_switcher",
     "displays",
+    "shortcuts",
+    "recorder_win",
     "theme",
     "pystray._win32",
     "PIL._tkinter_finder",

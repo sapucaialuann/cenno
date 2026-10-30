@@ -19,7 +19,6 @@ import sys
 import threading
 import time
 import tkinter as tk
-import tkinter.simpledialog as simpledialog
 import traceback
 import winreg
 import webbrowser
@@ -35,6 +34,8 @@ except Exception:  # pragma: no cover - pywin32 may not be installed
 
 import displays as dpy
 import hand_desktop_switcher as core
+import recorder_win
+import shortcuts
 import theme
 
 APP_NAME = "Cenno"
@@ -56,26 +57,20 @@ PRIVACY_LINE = "Runs on your machine. Nothing leaves it."
 SUPPORT_LINE = "Cenno is free. Support it on Ko-fi."
 
 DEFAULT_SETTINGS = {
+    "settings_version": 2,
     "enabled": True,
     "preview": True,
     "mouse": True,
     "preview_corner": "top_right",
     "preview_size": "medium",
     "preview_pos": None,
-    "dictation": "auto",
-    "dictation_shortcut": "",
-    "wispr_shortcut": "",
+    "dictation": "winvoice",
+    "dictation_toggle": None,
+    "dictation_ptt": None,
     "first_run": True,
     "theme": "system",
     "display_mode": "current",
 }
-
-DICTATION_MODES = (
-    ("auto",     "Automatic (Wispr Flow if running, else Win+H)"),
-    ("wispr",    "Wispr Flow"),
-    ("winvoice", "Windows Voice Typing (Win+H)"),
-    ("custom",   "Other app (custom shortcut)..."),
-)
 
 # Where the pointer box reaches: the screen the cursor is on, or every
 # screen at once.
@@ -118,6 +113,7 @@ def gesture_lines():
             "Thumbs up, hold · Play or pause",
             "Thumbs down, hold · Undo dictated text",
             "Hang loose, hold · Dictation on or off",
+            "Hang loose by your ear · Push to talk",
             "Open hand, gather fingertips · Start menu",
             "Wave, open hand side to side · Lock screen",
             "Rock horns, hold · Pause or resume gestures")
@@ -162,14 +158,20 @@ def setup_logging():
 def load_settings():
     try:
         with open(SETTINGS_PATH, encoding="utf-8") as f:
-            s = {**DEFAULT_SETTINGS, **json.load(f)}
+            raw = json.load(f)
     except Exception:
-        s = dict(DEFAULT_SETTINGS)
-    # Remap Mac-only dictation modes to the Windows default.
-    if s["dictation"] not in ("auto", "wispr", "winvoice", "custom"):
+        raw = {}
+    migrated = shortcuts.migrate_dictation(raw, "Windows") if raw else {}
+    s = {**DEFAULT_SETTINGS, **migrated}
+    for key in ("dictation_toggle", "dictation_ptt"):
+        if not shortcuts.is_valid(s[key]):
+            s[key] = None
+    if s["dictation"] not in ("winvoice", "shortcut"):
         s["dictation"] = DEFAULT_SETTINGS["dictation"]
     if s.get("display_mode") not in ("current", "all"):
         s["display_mode"] = DEFAULT_SETTINGS["display_mode"]
+    if raw and migrated != raw:
+        save_settings(s)
     return s
 
 
@@ -789,14 +791,16 @@ class CennoApp:
     def _sync_dictation(self):
         d = self.tracker.dispatcher
         d.dictation_mode = self.settings["dictation"]
-        d.dictation_shortcut = self.settings.get("dictation_shortcut", "")
-        d.wispr_shortcut = self.settings.get("wispr_shortcut", "")
+        d.dictation_toggle = self.settings["dictation_toggle"]
+        d.dictation_ptt = self.settings["dictation_ptt"]
 
     def _set_enabled(self, on):
         if self.settings["enabled"] == on:
             return
         self.settings["enabled"] = on
         save_settings(self.settings)
+        if not on:
+            self.tracker.dispatcher.release_dictation()
         print(f"Cenno {'on' if on else 'off'}")
 
     def _effective_dark(self):
@@ -846,6 +850,8 @@ class CennoApp:
 
         def on_toggle_pause(icon, item):
             app.tracker.set_paused(not app.tracker.engine.paused)
+            if app.tracker.engine.paused:
+                app.tracker.dispatcher.release_dictation()
             app._update_icon_state()
             app._sync_menu()
 
@@ -885,23 +891,29 @@ class CennoApp:
                 app._sync_menu()
             return cb
 
-        def make_dictation_cb(key):
-            def cb(icon, item):
-                if key == "wispr":
-                    app.settings["dictation"] = key
-                    save_settings(app.settings)
-                    app._sync_dictation()
-                    if not app.settings.get("wispr_shortcut") and app.root:
-                        app.root.after(0, app._ask_wispr_shortcut)
-                elif key == "custom":
-                    if app.root:
-                        app.root.after(0, app._ask_dictation_shortcut)
-                else:
-                    app.settings["dictation"] = key
-                    save_settings(app.settings)
-                    app._sync_dictation()
-                app._sync_menu()
-            return cb
+        def on_use_winvoice(icon, item):
+            app.settings["dictation"] = "winvoice"
+            app._save_dictation()
+
+        def on_use_dictation_app(icon, item):
+            if app.settings["dictation_toggle"]:
+                app.settings["dictation"] = "shortcut"
+                app._save_dictation()
+            elif app.root:
+                app.root.after(0, app._record_toggle)
+
+        def on_record_toggle(icon, item):
+            if app.root:
+                app.root.after(0, app._record_toggle)
+
+        def on_record_ptt(icon, item):
+            if app.root:
+                app.root.after(0, app._record_ptt)
+
+        def on_clear_ptt(icon, item):
+            app.tracker.dispatcher.release_dictation()
+            app.settings["dictation_ptt"] = None
+            app._save_dictation()
 
         def make_theme_cb(theme_name):
             def cb(icon, item):
@@ -972,11 +984,31 @@ class CennoApp:
                      radio=True)
             for key, label, _ in PREVIEW_SIZES
         ]
+        def app_shortcut_text(item):
+            sc = app.settings["dictation_toggle"]
+            return (f"Dictation app shortcut: {sc['label']}" if sc
+                    else "Dictation app (record shortcut)...")
+
+        def toggle_text(item):
+            sc = app.settings["dictation_toggle"]
+            return ("Record toggle shortcut... " + (f"({sc['label']})" if sc else "")).strip()
+
+        def ptt_text(item):
+            sc = app.settings["dictation_ptt"]
+            return f"Record push-to-talk key... ({sc['label'] if sc else 'none: toggles'})"
+
         dictation_items = [
-            MenuItem(label, make_dictation_cb(key),
-                     checked=lambda item, k=key: app.settings["dictation"] == k,
-                     radio=True)
-            for key, label in DICTATION_MODES
+            MenuItem("Windows Voice Typing (Win+H)", on_use_winvoice,
+                     checked=lambda item: app.settings["dictation"] == "winvoice",
+                     radio=True),
+            MenuItem(app_shortcut_text, on_use_dictation_app,
+                     checked=lambda item: app.settings["dictation"] == "shortcut",
+                     radio=True),
+            Menu.SEPARATOR,
+            MenuItem(toggle_text, on_record_toggle),
+            MenuItem(ptt_text, on_record_ptt),
+            MenuItem("Clear push-to-talk key", on_clear_ptt,
+                     visible=lambda item: bool(app.settings["dictation_ptt"])),
         ]
         theme_items = [
             MenuItem(label, make_theme_cb(key),
@@ -1111,37 +1143,32 @@ class CennoApp:
         except Exception as exc:
             print(f"WARN: could not refresh the tray menu: {exc}")
 
-    def _ask_wispr_shortcut(self):
-        current = self.settings.get("wispr_shortcut", "")
-        result = simpledialog.askstring(
-            "Wispr Flow shortcut",
-            "Enter the global shortcut Wispr Flow uses on this machine.\n"
-            "Check Wispr Flow Settings > Shortcut to find it.\n\n"
-            "Examples:  ctrl+shift+space   ctrl+shift+w\n\n"
-            "Modifiers: ctrl, shift, alt, win.",
-            initialvalue=current,
-            parent=self.root,
-        )
-        if result and result.strip():
-            self.settings["wispr_shortcut"] = result.strip().lower()
-            save_settings(self.settings)
-            self._sync_dictation()
+    def _save_dictation(self):
+        save_settings(self.settings)
+        self._sync_dictation()
+        self._sync_menu()
 
-    def _ask_dictation_shortcut(self):
-        current = self.settings.get("dictation_shortcut", "")
-        result = simpledialog.askstring(
-            "Dictation shortcut",
-            "Type the shortcut your dictation app uses to toggle,\n"
-            "e.g.  ctrl+shift+d   or   win+h\n\n"
-            "Modifiers: ctrl, shift, alt, win.",
-            initialvalue=current,
-            parent=self.root,
-        )
-        if result and result.strip():
-            self.settings["dictation"] = "custom"
-            self.settings["dictation_shortcut"] = result.strip().lower()
-            save_settings(self.settings)
-            self._sync_dictation()
+    def _record_toggle(self):
+        sc = recorder_win.record_shortcut(
+            self.root, "Press the toggle shortcut now...", self._effective_dark(),
+            reject=lambda sc: ("That's already your push-to-talk key."
+                               if shortcuts.same(sc, self.settings["dictation_ptt"])
+                               else None))
+        if sc:
+            self.settings["dictation_toggle"] = sc
+            self.settings["dictation"] = "shortcut"
+            self._save_dictation()
+
+    def _record_ptt(self):
+        sc = recorder_win.record_shortcut(
+            self.root, "Press the push-to-talk key now...", self._effective_dark(),
+            reject=lambda sc: ("That's already your toggle shortcut."
+                               if shortcuts.same(sc, self.settings["dictation_toggle"])
+                               else None))
+        if sc:
+            self.tracker.dispatcher.release_dictation()
+            self.settings["dictation_ptt"] = sc
+            self._save_dictation()
 
     def _show_welcome(self):
         """One-time first-run welcome dialog with camera permission guidance."""
@@ -1221,6 +1248,9 @@ class CennoApp:
             if self.icon:
                 self.icon.title = f"{APP_NAME}: {self.tracker.status}"
             self._update_icon_state()
+            if self.tracker.engine.paused or not self.settings["enabled"]:
+                # No hand can let go of a held push-to-talk key now.
+                self.tracker.dispatcher.release_dictation()
             # 4 Hz is enough to notice a screen being plugged in, unplugged or
             # dragged to another spot, and cheap enough to leave running.
             if self.tracker.refresh_displays() and self.preview is not None:
@@ -1243,6 +1273,7 @@ class CennoApp:
         self._alive = False
         self.tracker.stop_flag.set()
         self.tracker.dispatcher.submit("pointer_end", None)
+        self.tracker.dispatcher.release_dictation()
         if self.icon:
             try:
                 self.icon.stop()

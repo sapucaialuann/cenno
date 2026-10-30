@@ -47,7 +47,7 @@ opening/closing an overview.
 | 8 | OK sign + twist | Volume | Volume up / down (`pyautogui` media keys `volumeup`/`volumedown`) | `Dispatcher._do` → `MEDIA_KEYS` → `pag.press` | yes (code) |
 | 9 | Thumbs up (hold) | Play / pause | Play / pause (`pyautogui` media key `playpause`) | `Dispatcher._do` → `MEDIA_KEYS` → `pag.press` | yes (code) |
 | 10 | Thumbs down (hold) | Undo | Undo (`Ctrl+Z`) | `KEY_BINDINGS["Windows"]` undo | yes (code) |
-| 11 | Hang loose (hold) | Dictation on / off | Dictation on / off (Wispr Flow, Win+H voice typing, or custom shortcut) | `_toggle_dictation_windows()` | yes (code) |
+| 11 | Hang loose (hold) | Dictation on / off | Dictation on / off (Win+H voice typing, or a recorded shortcut for Wispr Flow and others). By the ear: push to talk with a recorded key | `Dispatcher._toggle_dictation()`, `_dictation_hold()` | yes (code) |
 | 12 | Open hand then gather fingertips | Spotlight (`Cmd+Space`) | Start menu (`Win`) | `KEY_BINDINGS["Windows"]` launcher | yes (code) |
 | 13 | Wave (open hand side to side) | Lock screen (`Ctrl+Cmd+Q`) | Lock screen (`Win+L`) | `KEY_BINDINGS["Windows"]` lock (falls through to bindings on Windows) | yes (code) |
 | 14 | Rock horns (hold 1 s) | Pause / resume gestures | Pause / resume gestures (a fist rests and does nothing) | `Dispatcher._do` `if name.startswith("pause")` | yes (code) |
