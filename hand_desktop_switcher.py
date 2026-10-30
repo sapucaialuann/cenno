@@ -28,6 +28,10 @@ frame, so they work whether you sit close to the camera or across the room):
 
   THUMBS UP (hold ~0.5 s)  -> play / pause media
 
+  THUMB LEFT / RIGHT (fist, thumb sideways)
+                           -> Left / Right arrow: slides, players, lists.
+                              Fires at once, repeats if you keep holding
+
   OPEN HAND -> GATHER all fingertips together ("ma che vuoi")
                            -> Spotlight                    (Cmd+Space)
   WAVE (open hand, side to side twice) -> lock screen     (Ctrl+Cmd+Q)
@@ -111,6 +115,7 @@ OK_OTHER_MIN = 0.45           # middle tip must be this far from thumb (OK)
 GATHER_MAX_SPREAD = 0.22      # all fingertips within this spread = gather
 THUMB_UP_MIN_LEN = 0.60       # thumb tip to thumb MCP, palms
 THUMB_UP_MARGIN = 0.15        # thumb tip must be this far above everything
+THUMB_SIDE_MARGIN = 0.25      # thumb tip must be this far left / right of everything
 POSE_STABLE_FRAMES = 3        # frames a pose must persist before it counts
 SHAKA_MIN_SPAN = 0.95         # hang loose: thumb tip to pinky tip, palms
 SHAKA_HOLD_SECONDS = 0.4      # hold hang loose this long to toggle dictation
@@ -221,6 +226,8 @@ VOLUME_DIRECTION = 1           # flip to -1 if clockwise feels backwards
 # --- Hold / transition gestures ---
 THUMBS_UP_HOLD_SECONDS = 0.5
 THUMBS_DOWN_HOLD_SECONDS = 0.5  # thumbs down: undo (deletes dictated text)
+ARROW_REPEAT_DELAY = 1.0       # thumb left / right: pause before it repeats
+ARROW_REPEAT_INTERVAL = 0.5    # ...then one more arrow press per interval
 GATHER_FROM_OPEN_WINDOW = 0.6  # gather must follow an open hand within this
 LAUNCHER_COOLDOWN_SECONDS = 1.5  # Cmd+Space toggles: one fire per gesture, ignore flicker
 WAVE_STROKE_PALMS = 0.35       # wave: each side-to-side stroke at least this far
@@ -297,8 +304,8 @@ def finger_ratio(pts, finger):
 
 
 def classify_pose(pts, palm):
-    """Return (pose, features).  Poses: ok, gather, point, thumbs_up, fist,
-    horns,
+    """Return (pose, features).  Poses: ok, gather, point, thumbs_up,
+    thumbs_down, thumb_left, thumb_right, fist, horns,
     shaka (hang loose), two, open, other."""
     ratios = {f: finger_ratio(pts, f) for f in FINGERS}
     ext = {f: r >= EXTENDED_RATIO for f, r in ratios.items()}
@@ -337,6 +344,15 @@ def classify_pose(pts, palm):
         if (thumb_len >= THUMB_UP_MIN_LEN
                 and pts[4][1] > lowest_other + THUMB_UP_MARGIN * palm):
             return "thumbs_down", feats
+        # The frame is mirrored before landmarks: image-left is the user's left.
+        leftmost_other = min(p[0] for i, p in enumerate(pts) if i not in (3, 4))
+        if (thumb_len >= THUMB_UP_MIN_LEN
+                and pts[4][0] < leftmost_other - THUMB_SIDE_MARGIN * palm):
+            return "thumb_left", feats
+        rightmost_other = max(p[0] for i, p in enumerate(pts) if i not in (3, 4))
+        if (thumb_len >= THUMB_UP_MIN_LEN
+                and pts[4][0] > rightmost_other + THUMB_SIDE_MARGIN * palm):
+            return "thumb_right", feats
         return "fist", feats
     if ext["index"] and ext["middle"] and curl["ring"] and curl["pinky"]:
         return "two", feats
@@ -479,6 +495,7 @@ class GestureEngine:
         return False
 
     def _reset_pose_state(self):
+        self.arrow_next = None
         self.knob_angle = None
         self.knob_ref = None
         self.knob_started = False
@@ -613,6 +630,14 @@ class GestureEngine:
                   and self.head_votes == 0):
                 ev.append(("dictation", 1))
                 self.latched = True
+
+        # Thumb left / right: arrow key now, again after a pause, then
+        # repeating while held (one slide per gesture unless you hold on).
+        if self.pose in ("thumb_left", "thumb_right"):
+            if self.arrow_next is None or now >= self.arrow_next:
+                ev.append(("arrow_left" if self.pose == "thumb_left" else "arrow_right", 1))
+                self.arrow_next = now + (ARROW_REPEAT_DELAY if self.arrow_next is None
+                                         else ARROW_REPEAT_INTERVAL)
 
         # Entry warm-up: hand fully inside the frame for a moment.
         # A few landmarks (usually the wrist when the hand is close) may be
@@ -928,6 +953,7 @@ KEY_BINDINGS = {
         "back": ("cmd", "["), "forward": ("cmd", "]"),
         "launcher": ("cmd", "space"), "undo": ("cmd", "z"),
         "lock": ("ctrl", "cmd", "q"),
+        "arrow_left": ("left",), "arrow_right": ("right",),
     },
     "Windows": {
         "space_left": ("ctrl", "win", "left"), "space_right": ("ctrl", "win", "right"),
@@ -936,6 +962,7 @@ KEY_BINDINGS = {
         "back": ("alt", "left"), "forward": ("alt", "right"),
         "launcher": ("win",), "undo": ("ctrl", "z"),
         "lock": ("win", "l"),
+        "arrow_left": ("left",), "arrow_right": ("right",),
     },
     "Linux": {
         "space_left": ("ctrl", "alt", "left"), "space_right": ("ctrl", "alt", "right"),
@@ -943,6 +970,7 @@ KEY_BINDINGS = {
         "close_overview": ("escape",),
         "back": ("alt", "left"), "forward": ("alt", "right"),
         "launcher": ("win",),
+        "arrow_left": ("left",), "arrow_right": ("right",),
     },
 }
 MEDIA_KEYS = {"volume_up": ("volumeup", NX_SOUND_UP),
@@ -1649,6 +1677,7 @@ ACTION_LABELS_MAC = {
     "close_overview": "CLOSE OVERVIEW", "back": "BACK", "forward": "FORWARD",
     "launcher": "SPOTLIGHT", "lock": "LOCK SCREEN", "volume_up": "VOLUME +", "volume_down": "VOLUME -",
     "play_pause": "PLAY / PAUSE", "dictation": "DICTATION", "dictation_hold_start": "TALK", "dictation_hold_end": "TALK END", "undo": "UNDO", "scroll_drag": "SCROLL", "scroll_fling": "FLICK",
+    "arrow_left": "ARROW <-", "arrow_right": "ARROW ->",
     "pause_on": "GESTURES PAUSED", "pause_off": "GESTURES ON",
     "click": "CLICK", "mouse_down": "DRAG", "mouse_up": "DROP",
 }
@@ -1658,6 +1687,7 @@ ACTION_LABELS_WIN = {
     "close_overview": "CLOSE TASK VIEW", "back": "BACK", "forward": "FORWARD",
     "launcher": "START MENU", "lock": "LOCK SCREEN", "volume_up": "VOLUME +", "volume_down": "VOLUME -",
     "play_pause": "PLAY / PAUSE", "dictation": "DICTATION", "dictation_hold_start": "TALK", "dictation_hold_end": "TALK END", "undo": "UNDO", "scroll_drag": "SCROLL", "scroll_fling": "FLICK",
+    "arrow_left": "ARROW <-", "arrow_right": "ARROW ->",
     "pause_on": "GESTURES PAUSED", "pause_off": "GESTURES ON",
     "click": "CLICK", "mouse_down": "DRAG", "mouse_up": "DROP",
 }

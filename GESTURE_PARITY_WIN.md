@@ -26,6 +26,8 @@ this review.
     "launcher":    ("win",),
     "undo":        ("ctrl", "z"),
     "lock":        ("win", "l"),
+    "arrow_left":  ("left",),
+    "arrow_right": ("right",),
 },
 ```
 
@@ -51,10 +53,11 @@ opening/closing an overview.
 | 12 | Open hand then gather fingertips | Spotlight (`Cmd+Space`) | Start menu (`Win`) | `KEY_BINDINGS["Windows"]` launcher | yes (code) |
 | 13 | Wave (open hand side to side) | Lock screen (`Ctrl+Cmd+Q`) | Lock screen (`Win+L`) | `KEY_BINDINGS["Windows"]` lock (falls through to bindings on Windows) | yes (code) |
 | 14 | Rock horns (hold 1 s) | Pause / resume gestures | Pause / resume gestures (a fist rests and does nothing) | `Dispatcher._do` `if name.startswith("pause")` | yes (code) |
+| 15 | Thumb pointing left / right (hold repeats) | Left / right arrow | Left / right arrow | `KEY_BINDINGS["Windows"]` arrow_left/arrow_right | yes (code) |
 
 ## Summary
 
-- All 14 gestures from the macOS `README.md` table have a Windows equivalent implemented
+- All 15 gestures from the macOS `README.md` table have a Windows equivalent implemented
   in code.
 - Every Windows binding lives in `KEY_BINDINGS["Windows"]`; media keys, dictation,
   pointer, scroll, click/drag, and pause/resume are handled by the shared `Dispatcher`
