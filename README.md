@@ -57,7 +57,8 @@ Voice Control > Commands > +): phrase "Cenno on", action **Open URL**,
 | Thumbs up (hold) | Play / pause |
 | Thumbs down (hold) | Undo (deletes the last dictated text) |
 | Thumb pointing left / right | Left / right arrow: next or previous slide. Hold to repeat |
-| Hang loose (hold) | Dictation on / off (pick the tool in menu bar > Dictation: Wispr Flow, Apple Dictation, or any app via its shortcut) |
+| Hang loose (hold) | Dictation on / off. Pick Apple Dictation, or a dictation app (Wispr Flow and others) with the shortcut you record in menu bar > Dictation |
+| Hang loose by your ear | Push to talk: Cenno holds your push-to-talk key while the hand is there, and lets go when it leaves. Record the key in the same menu. With no key recorded it turns dictation on, then off |
 | Open hand then gather fingertips | Spotlight |
 | Wave, short strokes side to side | Lock screen |
 | Rock horns (hold 1 s) | Pause / resume gestures (a fist does nothing, so you can rest your hand) |
@@ -187,7 +188,8 @@ Cenno on Windows is intentionally Windows-native rather than a macOS clone:
 | Thumbs up (hold) | Play / pause |
 | Thumbs down (hold) | Undo (deletes the last dictated text) |
 | Thumb pointing left / right | Left / right arrow: next or previous slide. Hold to repeat |
-| Hang loose (hold) | Dictation on / off (Win+H voice typing, Wispr Flow, or custom shortcut) |
+| Hang loose (hold) | Dictation on / off. Pick Windows Voice Typing (Win+H), or a dictation app with the shortcut you record in the tray menu > Dictation |
+| Hang loose by your ear | Push to talk: Cenno holds your push-to-talk key while the hand is there, and lets go when it leaves. Record the key in the same menu. With no key recorded it turns dictation on, then off |
 | Open hand then gather fingertips | Start menu (`Win`) |
 | Wave, short strokes side to side | Lock screen (`Win+L`) |
 | Rock horns (hold 1 s) | Pause / resume gestures (a fist does nothing, so you can rest your hand) |

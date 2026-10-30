@@ -87,6 +87,8 @@ import time
 from collections import deque
 
 import displays as dpy
+import headzone
+import shortcuts
 
 
 # =============================================================================
@@ -129,29 +131,10 @@ HOLD_FLICKER_SECONDS = 0.3    # a hold pose that drops out for less than this
                               # not fire twice)
 SHAKA_MIN_SPAN = 0.95         # hang loose: thumb tip to pinky tip, palms
 SHAKA_HOLD_SECONDS = 0.4      # hold hang loose this long to toggle dictation
-WISPR_BUNDLE_ID = "com.electron.wispr-flow"   # used for dictation when running
-
-# Key codes for custom dictation shortcuts (macOS virtual key codes, US layout).
-MOD_KEYS = {
-    "cmd": (55, "kCGEventFlagMaskCommand"), "command": (55, "kCGEventFlagMaskCommand"),
-    "shift": (56, "kCGEventFlagMaskShift"),
-    "option": (58, "kCGEventFlagMaskAlternate"), "alt": (58, "kCGEventFlagMaskAlternate"),
-    "opt": (58, "kCGEventFlagMaskAlternate"),
-    "ctrl": (59, "kCGEventFlagMaskControl"), "control": (59, "kCGEventFlagMaskControl"),
-    "fn": (63, "kCGEventFlagMaskSecondaryFn"),
-}
-KEY_CODES = dict(zip("asdfhgzxcv", (0, 1, 2, 3, 4, 5, 6, 7, 8, 9)))
-KEY_CODES.update({"b": 11, "q": 12, "w": 13, "e": 14, "r": 15, "y": 16, "t": 17,
-                  "1": 18, "2": 19, "3": 20, "4": 21, "6": 22, "5": 23, "9": 25,
-                  "7": 26, "8": 28, "0": 29, "o": 31, "u": 32, "i": 34, "p": 35,
-                  "l": 37, "j": 38, "k": 40, "n": 45, "m": 46,
-                  "return": 36, "enter": 36, "tab": 48, "space": 49, "escape": 53,
-                  "esc": 53, "delete": 51, "backspace": 51, "`": 50, "grave": 50,
-                  "left": 123, "right": 124, "down": 125, "up": 126,
-                  "f1": 122, "f2": 120, "f3": 99, "f4": 118, "f5": 96, "f6": 97,
-                  "f7": 98, "f8": 100, "f9": 101, "f10": 109, "f11": 103,
-                  "f12": 111, "f13": 105, "f14": 107, "f15": 113, "f16": 106,
-                  "f17": 64, "f18": 79, "f19": 80, "[": 33, "]": 30})
+PTT_HOLD_SECONDS = 0.25       # hang loose by the head: start push-to-talk this fast
+PTT_MAX_SECONDS = 180.0       # safety: release push-to-talk after this long
+HEAD_STABLE_FRAMES = 3        # consecutive "beside the head" frames to start talking
+HEAD_LEAVE_FRAMES = 4         # consecutive frames away from the head to stop
 
 # --- Motion units ---
 # Motion is measured in palms, but a hand close to the camera has a huge
@@ -574,6 +557,8 @@ class GestureEngine:
         # The cursor in relative mode outlives the pointing session, so it
         # is kept here and not in _reset_pose_state.
         self.rel_cursor = (0.5, 0.5)
+        self.ptt_active = False            # kept across hand resets: see _ptt_end
+        self.ptt_since = 0.0
         self._reset_hand()
 
     # --- state resets ---
@@ -595,6 +580,24 @@ class GestureEngine:
         self.latched = False
         self.debug = {}
         self._reset_pose_state()
+
+    @property
+    def wants_face(self):
+        """True when face detection is needed (hang loose seen or talking),
+        so the camera loop can skip it the rest of the time."""
+        return (self.ptt_active or self.pose == "shaka"
+                or self.raw_pose == "shaka")
+
+    def _ptt_end(self, ev):
+        if self.ptt_active:
+            self.ptt_active = False
+            ev.append(("dictation_hold_end", 1))
+
+    def end_ptt(self):
+        """Release push-to-talk if held (tracking switched off)."""
+        ev = []
+        self._ptt_end(ev)
+        return ev
 
     def _wave_reset(self):
         self.wave_anchor = None
@@ -674,9 +677,13 @@ class GestureEngine:
         self.rel_prev = None
         self.rel_push = (0.0, 0.0)
         self.rel_edge_armed = True
+        self.head_votes = 0
+        self.head_away = 0
 
     def no_hand(self, now):
         ev = []
+        if self.paused:
+            self._ptt_end(ev)
         if self.pose != "none" and HAND_LOST_GRACE_SECONDS > 0:
             if self.lost_since is None:
                 self.lost_since = now
@@ -688,8 +695,11 @@ class GestureEngine:
             self._scroll_release(now, ev)   # hand dropped mid-flick: glide
         if self.pose == "point":
             self._pointer_end(ev)
+        self._ptt_end(ev)
         self._reset_hand()
-        return [] if self.paused else ev
+        if self.paused:
+            return [e for e in ev if e[0] == "dictation_hold_end"]
+        return ev
 
     def _scroll_release(self, now, ev):
         """Fingers 'lifted' (pose ended / hand gone): glide if moving fast."""
@@ -704,6 +714,8 @@ class GestureEngine:
     # --- main step ---
     def update(self, pts, w, h, now, face=None):
         ev = []
+        if self.paused:
+            self._ptt_end(ev)
         raw_palm = palm_size(pts)
         self.ema_palm = raw_palm if self.ema_palm is None else (
             PALM_EMA_ALPHA * raw_palm + (1 - PALM_EMA_ALPHA) * self.ema_palm)
@@ -741,6 +753,7 @@ class GestureEngine:
                 self._scroll_release(now, ev)
             if self.pose == "point":
                 self._pointer_end(ev)
+            self._ptt_end(ev)
             # A hold pose that flickers out for a moment (a thumbs down
             # reads as a fist for a frame or two) keeps its hold timer and
             # latch, so the hold still completes and never fires twice.
@@ -763,6 +776,18 @@ class GestureEngine:
         if self.pose == "open":
             self.last_open_time = now
 
+        # Hang loose beside the head (push-to-talk) vs anywhere else (toggle).
+        if self.pose == "shaka":
+            near, why = headzone.head_check(pts, shape_palm, face)
+            self.head_votes = self.head_votes + 1 if near else 0
+            self.head_away = 0 if near else self.head_away + 1
+            self.debug["head"] = near
+            self.debug["head_why"] = why
+            self.debug["face_box"] = face
+            if self.ptt_active and (self.head_away >= HEAD_LEAVE_FRAMES
+                                    or now - self.ptt_since >= PTT_MAX_SECONDS):
+                self._ptt_end(ev)
+
         # Hold gestures.
         held = now - self.pose_since
         if not self.latched:
@@ -777,8 +802,17 @@ class GestureEngine:
             elif self.pose == "thumbs_down" and held >= THUMBS_DOWN_HOLD_SECONDS:
                 ev.append(("undo", 1))
                 self.latched = True
-            elif self.pose == "shaka" and held >= SHAKA_HOLD_SECONDS:
+            elif (self.pose == "shaka" and held >= PTT_HOLD_SECONDS
+                  and self.head_votes >= HEAD_STABLE_FRAMES and not self.paused):
+                ev.append(("dictation_hold_start", 1))
+                print(f"hang loose: push to talk, {self.debug.get('head_why')}")
+                self.ptt_active, self.ptt_since = True, now
+                self.head_away = 0
+                self.latched = True
+            elif (self.pose == "shaka" and held >= SHAKA_HOLD_SECONDS
+                  and self.head_votes == 0):
                 ev.append(("dictation", 1))
+                print(f"hang loose: toggle, {self.debug.get('head_why')}")
                 self.latched = True
 
         # Thumb left / right: arrow key now, again after a pause, then
@@ -920,7 +954,8 @@ class GestureEngine:
                                        max(abs(x1 - x0), abs(y1 - y0)) / palm / (t1 - t0))
 
         if self.paused:
-            ev = [e for e in ev if e[0].startswith("pause")]
+            ev = [e for e in ev
+                  if e[0].startswith("pause") or e[0] == "dictation_hold_end"]
         return ev
 
     # --- pointer ---
@@ -1487,7 +1522,7 @@ class Dispatcher:
             # pyautogui leaves the Command flag off the key event itself.
             # The system's own shortcuts (Spaces, Spotlight) don't mind, but
             # apps read the flag, so Cmd+Z arrived as a plain "z".
-            self._send_shortcut("+".join(keys))
+            shortcuts.tap(shortcuts.from_legacy("+".join(keys), "Darwin"))
             return
         if name in FOCUS_SCREEN_ACTIONS:
             # Space, Mission Control and App windows belong to the screen the
@@ -1510,94 +1545,74 @@ class Dispatcher:
             print(f"WARN: lock via login.framework failed ({exc}); trying shortcut")
             self.pag.hotkey("ctrl", "command", "q", interval=0.01)
 
-    # Menu titles that mean Start / Stop Dictation (en, de, pt, es, fr).
-    DICTATION_WORDS = ("dictation", "diktat", "ditado", "dictado", "dict\u00e9e")
-
-    def _wispr_running(self):
-        apps = self.appkit.NSWorkspace.sharedWorkspace().runningApplications()
-        return any((a.bundleIdentifier() or "") == WISPR_BUNDLE_ID for a in apps)
-
     # --- dictation -------------------------------------------------------
-    # mode: "auto" (Wispr Flow if running, else Apple), "wispr", "apple",
-    # or "custom" (send self.dictation_shortcut, e.g. "ctrl+option+d").
-    dictation_mode = "auto"
-    dictation_shortcut = ""
-    _apple_dictating = False
+    # mode: "apple" (Apple Dictation, macOS), "winvoice" (Windows Voice
+    # Typing, Win+H) or "shortcut" (tap the recorded dictation_toggle, for
+    # Wispr Flow and the like).  dictation_ptt is an optional recorded
+    # push-to-talk key, held while the hand is by the head.
+    dictation_mode = "winvoice" if OS_NAME == "Windows" else "apple"
+    dictation_toggle = None
+    dictation_ptt = None
+    _apple_dictating = False       # our guess, only used when the menu is no help
+    _ptt_held = None               # the push-to-talk shortcut now pressed, if any
+    _hold_toggled = False          # push-to-talk without a key: we started it
+    _hold_lock = threading.Lock()
 
-    def _send_shortcut(self, spec):
-        """Post a key combo such as "fn+space" or "cmd+shift+d" as real
-        key events (works with apps that listen through event taps)."""
-        Q = self.quartz
-        parts = [x.strip().lower() for x in spec.replace(" ", "").split("+") if x.strip()]
-        if not parts:
-            return False
-        mods = [MOD_KEYS[m] for m in parts[:-1] if m in MOD_KEYS]
-        last = parts[-1]
-        if last in MOD_KEYS:               # modifier-only shortcut, e.g. "fn"
-            mods.append(MOD_KEYS[last])
-            key = None
-        else:
-            key = KEY_CODES.get(last)
-            if key is None:
-                print(f"dictation: unknown key '{last}' in shortcut '{spec}'")
-                return False
-        src = Q.CGEventSourceCreate(Q.kCGEventSourceStateHIDSystemState)
-
-        def post(code, down, flags, flags_event=False):
-            e = Q.CGEventCreateKeyboardEvent(src, code, down)
-            if flags_event:
-                Q.CGEventSetType(e, Q.kCGEventFlagsChanged)
-            Q.CGEventSetFlags(e, flags)
-            Q.CGEventPost(Q.kCGHIDEventTap, e)
-            time.sleep(0.04)
-
-        flags = 0
-        for code, mask in mods:                     # modifiers down
-            flags |= getattr(Q, mask)
-            post(code, True, flags, True)
-        if key is not None:
-            post(key, True, flags)
-            post(key, False, flags)
-        for code, mask in reversed(mods):           # modifiers up
-            flags &= ~getattr(Q, mask)
-            post(code, False, flags, True)
-        return True
-
-    def _wispr_running(self):
-        apps = self.appkit.NSWorkspace.sharedWorkspace().runningApplications()
-        return any((a.bundleIdentifier() or "") == WISPR_BUNDLE_ID for a in apps)
+    # Menu titles that mean Start / Stop Dictation (en, de, pt, es, fr).
+    DICTATION_WORDS = ("dictation", "diktat", "ditado", "dictado", "dictée")
+    DICTATION_STOP_WORDS = ("stop", "beenden", "parar", "interromper",
+                            "detener", "arrêter", "arreter")
 
     def _toggle_dictation(self):
         """Start or stop dictation with whichever tool the user picked."""
-        if OS_NAME == "Windows":
-            self._toggle_dictation_windows()
-            return
-        if self.appkit is None or self.quartz is None:
-            return
         mode = self.dictation_mode
-        if mode == "auto":
-            mode = "wispr" if self._wispr_running() else "apple"
-        if mode == "wispr":
-            self._send_shortcut("fn+space")       # Wispr Flow hands-free toggle
-            print("dictation: toggled Wispr Flow (fn+space)")
-        elif mode == "custom":
-            if self._send_shortcut(self.dictation_shortcut):
-                print(f"dictation: sent {self.dictation_shortcut}")
-        else:
+        if mode == "shortcut":
+            if shortcuts.tap(self.dictation_toggle):
+                print(f"dictation: sent {self.dictation_toggle['label']}")
+            else:
+                print("WARN: dictation shortcut is not set or could not be sent "
+                      "(record one from the menu > Dictation)")
+        elif mode == "winvoice" and OS_NAME == "Windows":
+            self.pag.hotkey("win", "h")
+            print("dictation: toggled Windows Voice Typing (win+h)")
+        elif mode == "apple" and OS_NAME == "Darwin":
             self._apple_toggle()
 
     def _dictation_hold(self, down):
         """Push-to-talk (hang loose by the head): down=True when the hand
         arrives, False when it leaves.  Holds the recorded push-to-talk key;
         with none recorded, toggles dictation on at start and off at end."""
-        raise NotImplementedError
+        with self._hold_lock:
+            ptt = self.dictation_ptt
+            if self.dictation_mode == "shortcut" and shortcuts.is_valid(ptt):
+                if down and not self._ptt_held:
+                    if shortcuts.hold(ptt, True):
+                        self._ptt_held = ptt
+                elif not down and self._ptt_held:
+                    shortcuts.hold(self._ptt_held, False)
+                    self._ptt_held = None
+                return
+            if self._ptt_held and not down:     # the key was changed while held
+                shortcuts.hold(self._ptt_held, False)
+                self._ptt_held = None
+                return
+            if down == self._hold_toggled:
+                return              # already on, or never started
+            self._hold_toggled = down
+        self._toggle_dictation()
+
+    def release_dictation(self):
+        """Let go of a held push-to-talk key (or stop dictation we started
+        for it).  The apps call this on pause, off and quit, so a key is
+        never left pressed when the hand can no longer let go."""
+        if self._ptt_held or self._hold_toggled:
+            self._dictation_hold(False)
 
     def _apple_toggle(self):
-        """Apple Dictation: start from Edit > Start Dictation, stop with Esc."""
-        if self._apple_dictating:
-            self._apple_dictating = False
-            self._send_shortcut("escape")
-            print("dictation: stopped Apple Dictation (esc)")
+        """Apple Dictation: press Edit > Start Dictation, or Stop Dictation
+        while it runs.  The menu title tells which, so this stays right when
+        dictation was stopped some other way."""
+        if self.appkit is None:
             return
         try:
             import ApplicationServices as AS
@@ -1618,64 +1633,23 @@ class Dispatcher:
             for menu in attr(top, AS.kAXChildrenAttribute) or []:
                 for item in attr(menu, AS.kAXChildrenAttribute) or []:
                     title = str(attr(item, AS.kAXTitleAttribute) or "").lower()
-                    if (any(w in title for w in self.DICTATION_WORDS)
+                    if not (any(w in title for w in self.DICTATION_WORDS)
                             and attr(item, AS.kAXEnabledAttribute)):
-                        AS.AXUIElementPerformAction(item, AS.kAXPressAction)
-                        self._apple_dictating = True
-                        print(f"dictation: pressed '{title}' in {name}")
-                        return
+                        continue
+                    stopping = any(w in title for w in self.DICTATION_STOP_WORDS)
+                    err = AS.AXUIElementPerformAction(item, AS.kAXPressAction)
+                    if stopping and err != 0:
+                        shortcuts.tap(shortcuts.escape())
+                    self._apple_dictating = not stopping
+                    print(f"dictation: pressed '{title}' in {name}")
+                    return
+        if self._apple_dictating:           # no menu item to read: trust our guess
+            self._apple_dictating = False
+            shortcuts.tap(shortcuts.escape())
+            print("dictation: stopped Apple Dictation (esc)")
+            return
         print(f"dictation: no Dictation menu item in {name} "
               "(is Dictation on in System Settings > Keyboard?)")
-
-    # --- Windows dictation -----------------------------------------------
-    # macOS uses synthetic key events (_send_shortcut) because event taps
-    # ignore synthetic flags; on Windows pyautogui's hotkey is enough.
-    wispr_shortcut = ""
-
-    def _wispr_running_windows(self):
-        try:
-            import subprocess
-            out = subprocess.run(
-                ["tasklist", "/FO", "CSV", "/NH"],
-                capture_output=True, text=True, timeout=3,
-            ).stdout.lower()
-            return "wispr" in out
-        except Exception:
-            return False
-
-    def _toggle_dictation_windows(self):
-        mode = getattr(self, "dictation_mode", "auto")
-        if mode == "auto":
-            mode = "wispr" if self._wispr_running_windows() else "winvoice"
-
-        if mode == "wispr":
-            sc = getattr(self, "wispr_shortcut", "")
-            if sc:
-                keys = [p.strip() for p in sc.replace("+", " ").split() if p.strip()]
-                try:
-                    self.pag.hotkey(*keys)
-                    print(f"dictation: toggled Wispr Flow ({sc})")
-                except Exception as exc:
-                    print(f"WARN: Wispr Flow shortcut {sc!r} failed: {exc}")
-            else:
-                print("WARN: Wispr Flow mode active but no shortcut configured "
-                      "(set it via menu > Dictation > Wispr Flow)")
-            return
-
-        if mode == "custom":
-            sc = getattr(self, "dictation_shortcut", "")
-            if sc:
-                keys = [p.strip() for p in sc.replace("+", " ").split() if p.strip()]
-                try:
-                    self.pag.hotkey(*keys)
-                    print(f"dictation: sent {sc}")
-                except Exception as exc:
-                    print(f"WARN: dictation shortcut {sc!r} failed: {exc}")
-            return
-
-        # winvoice / fallback: Windows Voice Typing (Win+H)
-        self.pag.hotkey("win", "h")
-        print("dictation: toggled Windows Voice Typing (win+h)")
 
     def _mac_media_key(self, code):
         A, Q = self.appkit, self.quartz
@@ -2141,6 +2115,9 @@ def main():
                 mp_drawing.draw_landmarks(frame, hl, mp_hands.HAND_CONNECTIONS)
                 pts = [(p.x * w, p.y * h) for p in hl.landmark]
                 events = engine.update(pts, w, h, now, face=face)
+                if face is not None and engine.ptt_active:
+                    cv2.rectangle(frame, (int(face[0]), int(face[1])),
+                                  (int(face[2]), int(face[3])), (0, 255, 0), 1)
                 if engine.pose == "point":
                     # Show the area that maps to the whole screen.
                     x0, y0, x1, y1 = POINTER_BOX
@@ -2177,6 +2154,8 @@ def main():
                  (80, 80, 255) if engine.paused else (255, 255, 255), 2)
             if now - last_action_time < ACTION_FLASH_SECONDS:
                 text(frame, last_action, 55, 0.8, (0, 255, 0), 2)
+            elif engine.ptt_active:
+                text(frame, "TALK", 55, 0.8, (0, 255, 0), 2)
             elif engine.pose in ("open", "flat", "two") and not engine.armed:
                 text(frame, "settle hand to re-arm", 55, 0.55, (0, 200, 255))
             d = engine.debug
@@ -2226,6 +2205,8 @@ def main():
                 break
             if key == ord("p"):
                 engine.paused = not engine.paused
+                for name, n in engine.end_ptt():
+                    dispatcher.submit(name, n)
                 dispatcher.submit("pointer_end", None)
             if key == ord("h"):
                 show_help = not show_help

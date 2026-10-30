@@ -21,6 +21,9 @@ import traceback
 import rumps
 
 import hand_desktop_switcher as core
+import headzone
+import recorder_mac
+import shortcuts
 import theme
 
 APP_NAME = "Cenno"
@@ -37,16 +40,16 @@ if os.path.isdir(_OLD_SUPPORT_DIR) and not os.path.exists(SUPPORT_DIR):
     except OSError:
         pass
 SUPPORT_URL = "https://ko-fi.com/sapucaialuann"
-DEFAULT_SETTINGS = {"enabled": True, "preview": True, "mouse": True,
+DEFAULT_SETTINGS = {"settings_version": 2,
+                    "enabled": True, "preview": True, "mouse": True,
                     "preview_corner": "top_right",
                     "preview_size": "medium", "preview_pos": None,
-                    "dictation": "auto", "dictation_shortcut": "",
+                    "dictation": "apple", "dictation_toggle": None,
+                    "dictation_ptt": None,
                     "display_mode": "current",
                     "pointer_mode": core.POINTER_MODE,
                     "scroll_mode": core.SCROLL_MODE}
-DICTATION_MODES = (("auto", "Automatic (Wispr Flow if running, else Apple)"),
-                   ("wispr", "Wispr Flow"), ("apple", "Apple Dictation"),
-                   ("custom", "Other app (custom shortcut)..."))
+WISPR_APP = "/Applications/Wispr Flow.app"
 DISPLAY_MODES = (("current", "Current display"),
                  ("all", "All displays"))
 POINTER_MODES = (("relative", "Trackpad: cursor follows your hand's movement"),
@@ -80,6 +83,7 @@ def gesture_lines():
             "Thumbs down, hold · Undo dictated text",
             "Thumb left or right · Arrow key, hold to repeat",
             "Hang loose, hold · Dictation on or off",
+            "Hang loose by your ear · Push to talk",
             "Open hand, gather fingertips · Spotlight",
             "Wave, short strokes side to side · Lock screen",
             "Rock horns, hold · Pause or resume gestures")
@@ -110,9 +114,19 @@ def setup_logging():
 def load_settings():
     try:
         with open(SETTINGS_PATH) as f:
-            return {**DEFAULT_SETTINGS, **json.load(f)}
+            raw = json.load(f)
     except Exception:
         return dict(DEFAULT_SETTINGS)
+    migrated = shortcuts.migrate_dictation(raw, "Darwin", os.path.isdir(WISPR_APP))
+    s = {**DEFAULT_SETTINGS, **migrated}
+    for key in ("dictation_toggle", "dictation_ptt"):
+        if not shortcuts.is_valid(s[key]):
+            s[key] = None
+    if s["dictation"] not in ("apple", "shortcut"):
+        s["dictation"] = "apple"
+    if migrated != raw:
+        save_settings(s)
+    return s
 
 
 def save_settings(s):
@@ -240,6 +254,8 @@ class Tracker(threading.Thread):
                         cap.release()
                         cap = None
                         self.dispatcher.submit("pointer_end", None)
+                        for name, n in self.engine.end_ptt():
+                            self.dispatcher.submit(name, n)
                     self.status = "Off"
                     with self.lock:
                         self.preview_frame = None
@@ -337,6 +353,10 @@ class Tracker(threading.Thread):
                 frame, hl, mp_hands.HAND_CONNECTIONS,
                 drawing.DrawingSpec(color=col("trace"), thickness=2, circle_radius=2),
                 drawing.DrawingSpec(color=col("ink"), thickness=1))
+            face = self.engine.debug.get("face_box")
+            if self.engine.ptt_active and face is not None:
+                cv2.rectangle(frame, (int(face[0]), int(face[1])),
+                              (int(face[2]), int(face[3])), col("trace"), 2)
             if (self.engine.pose == "point" and self.settings["mouse"]
                     and self.engine.pointer_mode == "absolute"):
                 x0, y0, x1, y1 = core.POINTER_BOX
@@ -595,12 +615,19 @@ class CennoApp(rumps.App):
         self.scroll_menu, self.scroll_items = self._make_mode_menu(
             "Scrolling", SCROLL_MODES, self.set_scroll_mode)
         self.dictation_menu = rumps.MenuItem("Dictation (hang loose)")
-        self.dictation_items = {}
-        for key, label in DICTATION_MODES:
-            item = rumps.MenuItem(label, callback=self.set_dictation)
-            item.mode_key = key
+        self.apple_item = rumps.MenuItem("Apple Dictation",
+                                         callback=self.use_apple_dictation)
+        self.app_item = rumps.MenuItem("Dictation app (record shortcut)...",
+                                       callback=self.use_dictation_app)
+        self.toggle_item = rumps.MenuItem("Record toggle shortcut...",
+                                          callback=self.record_toggle)
+        self.ptt_item = rumps.MenuItem("Record push-to-talk key...",
+                                       callback=self.record_ptt)
+        self.clear_ptt_item = rumps.MenuItem("Clear push-to-talk key",
+                                             callback=self.clear_ptt)
+        for item in (self.apple_item, self.app_item, rumps.separator,
+                     self.toggle_item, self.ptt_item):
             self.dictation_menu.add(item)
-            self.dictation_items[key] = item
         self.ax_item = rumps.MenuItem("Allow Accessibility...", callback=self.fix_accessibility)
         self.login_item = rumps.MenuItem("Open at login", callback=self.toggle_login)
         gestures = rumps.MenuItem("Gestures")
@@ -682,14 +709,8 @@ class CennoApp(rumps.App):
         self.pause_item.state = int(self.tracker.engine.paused)
         self.preview_item.state = int(self.settings["preview"])
         self.enabled_item.state = int(self.settings["enabled"])
-        for key, item in self.dictation_items.items():
-            item.state = int(self.settings["dictation"] == key)
-        sc = self.settings.get("dictation_shortcut") or ""
-        self.dictation_items["custom"].title = (
-            f"Other app: {sc}  (change...)" if sc else "Other app (custom shortcut)...")
+        self._sync_dictation()
         d = self.tracker.dispatcher
-        d.dictation_mode = self.settings["dictation"]
-        d.dictation_shortcut = sc
         mode = self.settings.get("display_mode", core.DISPLAY_MODE_CURRENT)
         d.set_display_mode(mode)
         for key, item in self.display_items.items():
@@ -707,6 +728,35 @@ class CennoApp(rumps.App):
         for key, item in self.scroll_items.items():
             item.state = int(engine.scroll_mode == key)
         self.login_item.state = int(login_item_enabled())
+
+    def _sync_dictation(self):
+        """Dictation menu texts and checks, and the dispatcher's copy."""
+        mode = self.settings["dictation"]
+        toggle, ptt = self.settings["dictation_toggle"], self.settings["dictation_ptt"]
+        hotkeys = shortcuts.read_mac_hotkeys()
+
+        def shown(sc):
+            return shortcuts.menu_label(sc, "Darwin", hotkeys)
+
+        self.apple_item.state = int(mode == "apple")
+        self.app_item.state = int(mode == "shortcut")
+        self.app_item.title = (f"Dictation app shortcut: {shown(toggle)}" if toggle
+                               else "Dictation app (record shortcut)...")
+        self.toggle_item.title = (f"Record toggle shortcut... ({shown(toggle)})"
+                                  if toggle else "Record toggle shortcut...")
+        self.ptt_item.title = ("Record push-to-talk key... "
+                               f"({shown(ptt) if ptt else 'none: toggles'})")
+        try:
+            if ptt and self.clear_ptt_item.title not in self.dictation_menu:
+                self.dictation_menu.add(self.clear_ptt_item)
+            elif not ptt and self.clear_ptt_item.title in self.dictation_menu:
+                del self.dictation_menu[self.clear_ptt_item.title]
+        except Exception as exc:
+            print(f"WARN: could not update the dictation menu: {exc}")
+        d = self.tracker.dispatcher
+        d.dictation_mode = mode
+        d.dictation_toggle = toggle
+        d.dictation_ptt = ptt
 
     def _set_icon(self, paused):
         """SF Symbol in the menu bar (falls back to the emoji title)."""
@@ -757,6 +807,8 @@ class CennoApp(rumps.App):
         if self.pause_item.state != int(paused):
             self.pause_item.state = int(paused)
         dim = paused or not self.settings["enabled"]
+        if dim:                      # no hand can let go of a held key now
+            self.tracker.dispatcher.release_dictation()
         if not self.icon_set or getattr(self, "_icon_paused", None) != dim:
             self._icon_paused = dim
             self._set_icon(dim)
@@ -930,22 +982,52 @@ class CennoApp(rumps.App):
         save_settings(self.settings)
         self._sync_checks()
 
-    def set_dictation(self, sender):
-        mode = sender.mode_key
-        if mode == "custom":
-            w = rumps.Window(
-                title="Dictation shortcut",
-                message=("Type the shortcut your dictation app uses to start and stop "
-                         "(toggle / hands-free mode), for example:\n"
-                         "  ctrl+option+d    cmd+shift+space    fn+space    f5\n\n"
-                         "Modifiers: cmd, ctrl, option, shift, fn."),
-                default_text=self.settings.get("dictation_shortcut") or "",
-                ok="Save", cancel="Cancel", dimensions=(260, 24))
-            r = w.run()
-            if not r.clicked or not r.text.strip():
-                return
-            self.settings["dictation_shortcut"] = r.text.strip().lower()
-        self.settings["dictation"] = mode
+    def use_apple_dictation(self, _):
+        self.settings["dictation"] = "apple"
+        self._save_dictation()
+
+    def use_dictation_app(self, _):
+        if self.settings["dictation_toggle"]:
+            self.settings["dictation"] = "shortcut"
+            self._save_dictation()
+        else:
+            self.record_toggle(None)
+
+    def _record(self, title, other, clash):
+        """Ask for a shortcut until it differs from `other`; None on cancel."""
+        while True:
+            hotkeys = shortcuts.read_mac_hotkeys()
+            sc = recorder_mac.record_shortcut(
+                title, warn=lambda s: shortcuts.clash_message(s, "Darwin", hotkeys))
+            if sc and shortcuts.same(sc, other):
+                rumps.alert(APP_NAME, clash)
+                continue
+            return sc
+
+    def record_toggle(self, _):
+        sc = self._record("Press the toggle shortcut now...",
+                          self.settings["dictation_ptt"],
+                          "That's already your push-to-talk key. Try another.")
+        if sc:
+            self.settings["dictation_toggle"] = sc
+            self.settings["dictation"] = "shortcut"
+            self._save_dictation()
+
+    def record_ptt(self, _):
+        sc = self._record("Press the push-to-talk key now...",
+                          self.settings["dictation_toggle"],
+                          "That's already your toggle shortcut. Try another.")
+        if sc:
+            self.tracker.dispatcher.release_dictation()
+            self.settings["dictation_ptt"] = sc
+            self._save_dictation()
+
+    def clear_ptt(self, _):
+        self.tracker.dispatcher.release_dictation()
+        self.settings["dictation_ptt"] = None
+        self._save_dictation()
+
+    def _save_dictation(self):
         save_settings(self.settings)
         self._sync_checks()
 
@@ -963,6 +1045,7 @@ class CennoApp(rumps.App):
     def quit_app(self, _):
         self.tracker.stop_flag.set()
         self.tracker.dispatcher.submit("pointer_end", None)
+        self.tracker.dispatcher.release_dictation()
         time.sleep(0.2)
         rumps.quit_application()
 

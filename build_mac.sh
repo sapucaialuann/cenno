@@ -31,11 +31,13 @@ echo "== layered icon (Dark, Clear, Tinted)"
 # Needs Xcode 26 (not just the Command Line Tools). Falls back to the flat icon.
 XCODE_DEV=/Applications/Xcode.app/Contents/Developer
 if [ -x "$XCODE_DEV/usr/bin/actool" ]; then
+  # actool resolves relative paths from another directory, so give it
+  # absolute ones (a relative path wrote into the wrong checkout).
   rm -rf build/assets && mkdir -p build/assets
   if DEVELOPER_DIR="$XCODE_DEV" xcrun actool assets/Cenno.icon \
-      --compile build/assets --app-icon Cenno --platform macosx \
+      --compile "$PWD/build/assets" --app-icon Cenno --platform macosx \
       --minimum-deployment-target 12.0 --include-all-app-icons \
-      --output-partial-info-plist build/assets/partial.plist >/dev/null; then
+      --output-partial-info-plist "$PWD/build/assets/partial.plist" >/dev/null; then
     cp build/assets/Assets.car dist/Cenno.app/Contents/Resources/
     /usr/libexec/PlistBuddy -c "Add :CFBundleIconName string Cenno" dist/Cenno.app/Contents/Info.plist 2>/dev/null \
       || /usr/libexec/PlistBuddy -c "Set :CFBundleIconName Cenno" dist/Cenno.app/Contents/Info.plist
@@ -45,8 +47,20 @@ if [ -x "$XCODE_DEV/usr/bin/actool" ]; then
 else
   echo "Xcode not found, using the flat icon only"
 fi
-codesign --force --deep --sign - dist/Cenno.app
-codesign --verify --deep dist/Cenno.app && echo "signature ok (ad-hoc)"
+# Sign with the local certificate when this Mac has one
+# (installer/make_dev_cert_mac.sh), so Camera and Accessibility permissions
+# survive rebuilds. Otherwise ad-hoc, as on the release runner.
+SIGN_KC="$HOME/Library/Keychains/cenno-signing.keychain-db"
+SIGN_NAME="Cenno Local Signing"
+if security find-identity -p codesigning "$SIGN_KC" 2>/dev/null | grep -q "$SIGN_NAME"; then
+  security unlock-keychain -p cenno "$SIGN_KC"
+  codesign --force --deep --keychain "$SIGN_KC" --sign "$SIGN_NAME" dist/Cenno.app
+  SIGNED_WITH="$SIGN_NAME"
+else
+  codesign --force --deep --sign - dist/Cenno.app
+  SIGNED_WITH="ad-hoc"
+fi
+codesign --verify --deep dist/Cenno.app && echo "signature ok ($SIGNED_WITH)"
 
 echo "== dmg"
 rm -rf build/dmg && mkdir -p build/dmg

@@ -12,6 +12,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import hand_desktop_switcher as core            # noqa: E402
+import shortcuts                       # noqa: E402
 from test_thumb_arrows import make_fist, pose_of, run   # noqa: E402
 
 FRAME = 1.0 / 30
@@ -69,8 +70,7 @@ def test_app_shortcuts_have_mac_key_codes():
     # Sent through _send_shortcut, which needs a code for every key.
     for name in core.APP_SHORTCUTS:
         keys = core.KEY_BINDINGS["Darwin"][name]
-        assert keys[0] in core.MOD_KEYS, (name, keys)
-        assert keys[-1] in core.KEY_CODES, (name, keys)
+        assert shortcuts.from_legacy("+".join(keys), "Darwin"), (name, keys)
 
 
 if __name__ == "__main__":
