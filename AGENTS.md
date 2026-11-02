@@ -48,10 +48,11 @@ gets tried in real use: the user's experience there beats any score.
 ## Every piece of work starts from a GitHub issue
 
 - A new request, a bug found along the way, or an idea becomes an issue *before* work starts. Search the open issues first; extend an existing one instead of duplicating it.
-- Each issue gets exactly one **type**, at least one **area**, and an **OS** label only if it affects one system:
+- Each issue gets exactly one **type**, at least one **area**, one **priority**, and an **OS** label only if it affects one system:
   - type: `type: bug` (does not work as intended), `type: feature` (something new), `type: improvement` (make what exists work better, incl. tuning), `type: chore` (build, release, docs, tools, process)
   - area: `area: spaces`, `area: pointer`, `area: spotlight`, `area: scroll`, `area: dictation`, `area: gestures` (other poses), `area: app` (menu, preview, settings, permissions), `area: tools`
   - os: `os: macos`, `os: windows` (no OS label = both)
+  - priority, exactly one: `P0: critical` (unusable or harmful: drop everything), `P1: high` (a main gesture unreliable in daily use: next up), `P2: medium` (noticeable, or needed for the next release), `P3: low` (minor, rarely used, or watch only). The developer has the final say; work on the highest priority first.
 - Put it in a milestone when it belongs to a release or project (`0.3.0`, `Pointer project`).
 - The issue says what is wrong or wanted, the evidence (measurements, recording, log lines), and what "done" means.
 - Branches and commits name the issue (`fix/10-ghost-drag`, `Fixes #10` in the commit or PR). Close it with the measured result.
