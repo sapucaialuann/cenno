@@ -120,7 +120,7 @@ CURLED_RATIO = 1.00           # <= this counts as curled
 OPEN_MIN_SPREAD = 0.40        # fingertip spread / palm for an "open" hand
 PINCH_MAX = 0.30              # thumb-index tip distance for OK / gather
 OK_OTHER_MIN = 0.45           # middle tip must be this far from thumb (OK)
-GATHER_MAX_SPREAD = 0.22      # all fingertips within this spread = gather
+GATHER_MAX_SPREAD = 0.28      # all fingertips within this spread = gather
 THUMB_UP_MIN_LEN = 0.60       # thumb tip to thumb MCP, palms
 THUMB_UP_MARGIN = 0.15        # thumb tip must be this far above everything
 THUMB_DOWN_MIN_LEN = 0.45     # thumbs down: the thumb points away from a camera
@@ -277,6 +277,12 @@ ARROW_REPEAT_DELAY = 1.0       # thumb left / right: pause before it repeats
 ARROW_REPEAT_INTERVAL = 0.5    # ...then one more arrow press per interval
 GATHER_FROM_OPEN_WINDOW = 0.6  # gather must follow an open hand within this
 LAUNCHER_COOLDOWN_SECONDS = 1.5  # Cmd+Space toggles: one fire per gesture, ignore flicker
+# Diagnostics only: a hand that was open and then pulls its fingertips this
+# close (thumb by the index) within this long is a gather attempt, and one
+# that does not fire Spotlight leaves a single log line saying why.
+GATHER_ATTEMPT_SPREAD = 0.40
+GATHER_ATTEMPT_WINDOW = 1.0
+GATHER_ATTEMPT_REPORT_AFTER = 0.5  # judge an attempt after the hand held this long
 WAVE_STROKE_PALMS = 0.35       # wave: each side-to-side stroke at least this far
 WAVE_MAX_STROKE_PALMS = 1.2    # wave: a stroke longer than this is a sweep
 WAVE_MIN_REVERSALS = 3         # direction changes needed (two full waves)
@@ -320,7 +326,7 @@ _FOCUS_SCREEN_ACTIONS = {
 FOCUS_SCREEN_ACTIONS = _FOCUS_SCREEN_ACTIONS.get(OS_NAME, ())
 # Shortcuts handled by the app in front rather than by the system (macOS):
 # these are sent with the modifier flags set on every key event.
-APP_SHORTCUTS = ("undo", "back", "forward", "app_windows")
+APP_SHORTCUTS = ("undo", "back", "forward", "app_windows", "launcher")
 # How often the scroll thread may re-check which screen it should be on.
 FOCUS_CHECK_SECONDS = 0.05
 
@@ -584,6 +590,7 @@ class GestureEngine:
         self.latched = False
         self.debug = {}
         self._reset_pose_state()
+        self.gather_try = None      # current gather attempt, for the miss log
 
     @property
     def wants_face(self):
@@ -715,6 +722,57 @@ class GestureEngine:
             if abs(peak) >= FLICK_MIN_PALMS_S:
                 ev.append(("scroll_fling", peak))
 
+    def _gather_watch(self, feats, now):
+        """Log one line when a gather attempt does not open Spotlight.
+        An attempt: the hand was open a moment ago and the fingertips are
+        now close together with the thumb by the index.  Silent otherwise."""
+        close = (feats["spread"] < GATHER_ATTEMPT_SPREAD
+                 and feats["pinch"] <= PINCH_MAX * 1.3
+                 and all(r > CURLED_RATIO for r in feats["ratios"].values())
+                 and now - self.last_open_time <= GATHER_ATTEMPT_WINDOW)
+        a = self.gather_try
+        if a is None:
+            if close:
+                self.gather_try = {"start": now, "best": feats["spread"],
+                                   "done": False, "gather_age": None,
+                                   "cooldown": False}
+                a = self.gather_try
+            else:
+                return
+        elif not close and not (self.pose == "gather" and not a["done"]):
+            if not a["done"]:
+                self._gather_report(a)
+            self.gather_try = None
+            return
+        a["best"] = min(a["best"], feats["spread"])
+        if a["done"]:
+            return
+        if self.last_launcher == now:
+            a["done"] = True            # it worked: nothing to explain
+            return
+        if self.pose == "gather" and a["gather_age"] is None:
+            a["gather_age"] = now - self.last_open_time
+            a["cooldown"] = now - self.last_launcher <= LAUNCHER_COOLDOWN_SECONDS
+        if now - a["start"] >= GATHER_ATTEMPT_REPORT_AFTER:
+            self._gather_report(a)
+
+    def _gather_report(self, a):
+        a["done"] = True
+        if a["gather_age"] is not None:
+            if a["cooldown"]:
+                why = "launcher cooldown"
+            elif a["gather_age"] > GATHER_FROM_OPEN_WINDOW:
+                why = (f"too slow after open hand ({a['gather_age']:.2f} s"
+                       f" > {GATHER_FROM_OPEN_WINDOW} s)")
+            else:
+                why = "gather was not held steady"
+        elif a["best"] > GATHER_MAX_SPREAD:
+            why = (f"closest spread {a['best']:.2f}"
+                   f" (need <= {GATHER_MAX_SPREAD})")
+        else:
+            why = "gather pose too brief (flickered)"
+        print(f"gather missed: {why}")
+
     # --- main step ---
     def update(self, pts, w, h, now, face=None):
         ev = []
@@ -771,14 +829,21 @@ class GestureEngine:
             self.buf.clear()
             self._reset_pose_state()
             if (raw_pose == "gather"
-                    and not self.near_face
                     and now - self.last_open_time <= GATHER_FROM_OPEN_WINDOW
                     and now - self.last_launcher > LAUNCHER_COOLDOWN_SECONDS):
                 ev.append(("launcher", 1))
                 self.last_launcher = now
                 self.latched = True
+                # The hand reopens and drifts after Spotlight shows up; keep
+                # that from firing a slap, swipe or wave (it would dismiss
+                # Spotlight) until the hand has settled.
+                self.buf.clear()
+                self.armed, self.still_since = False, None
+                self.last_fire = now
+                self._wave_reset()
         if self.pose == "open":
             self.last_open_time = now
+        self._gather_watch(feats, now)
 
         # Hang loose beside the head (push-to-talk) vs anywhere else (toggle).
         if self.pose == "shaka":
@@ -1623,8 +1688,8 @@ class Dispatcher:
             return
         if name in APP_SHORTCUTS and self.quartz is not None:
             # pyautogui leaves the Command flag off the key event itself.
-            # The system's own shortcuts (Spaces, Spotlight) don't mind, but
-            # apps read the flag, so Cmd+Z arrived as a plain "z".
+            # Apps read the flag, so Cmd+Z arrived as a plain "z", and
+            # Spotlight only opened some of the time.
             shortcuts.tap(shortcuts.from_legacy("+".join(keys), "Darwin"))
             return
         if name in FOCUS_SCREEN_ACTIONS:

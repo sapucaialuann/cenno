@@ -412,6 +412,7 @@ class Tracker(threading.Thread):
         face_tracker = core.FaceTracker(mp.solutions.face_detection)
         cap = None
         frames, fps_t0 = 0, time.monotonic()
+        fps_logged = fps_t0
 
         try:
             while not self.stop_flag.is_set():
@@ -489,6 +490,9 @@ class Tracker(threading.Thread):
                 if now - fps_t0 >= 1.0:
                     self.fps = frames / (now - fps_t0)
                     frames, fps_t0 = 0, now
+                    if now - fps_logged >= 60.0:
+                        print(f"fps: {self.fps:.1f}")   # for diagnosing slow tracking
+                        fps_logged = now
 
                 if self.settings["preview"]:
                     jpg = self._make_preview(cv2, drawing, mp_hands, frame, hl, now)
