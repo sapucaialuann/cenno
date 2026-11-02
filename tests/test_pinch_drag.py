@@ -173,12 +173,12 @@ def test_the_cursor_stops_moving_while_the_fingers_open():
     # open the fingers while the hand moves away
     for ratio in (0.2, 0.35, 0.5, 0.6):
         t = feed(eng, pinch_point(240, 300, ratio), t, log)
-    moves = of(log, "pointer_move")
-    # the last two frames are frozen: they hold the same spot
-    assert moves[-1] == moves[-2], moves[-4:]
-    # and the frozen spot is the one from before the opening, not the one
-    # the drifting hand would have reached
-    assert abs(moves[-1][0] - 0.5) <= 0.005, moves[-1]
+    # The fingers coming apart ends the drag during the opening (not only
+    # past a fixed wide gap), and the item is dropped on the spot from
+    # before the opening, not where the drifting hand would have taken it.
+    ups = of(log, "mouse_up")
+    assert len(ups) == 1, log
+    assert abs(ups[0][0] - 0.5) <= 0.005, ups[0]
 
 
 def test_closing_the_fingers_again_unfreezes_the_drag():
@@ -402,6 +402,39 @@ def test_pointer_end_after_a_queued_release_does_not_release_twice():
     anim.handle("pointer_end", None)
     ups = [a for a in anim.actions if a[0] == "mouse_up"]
     assert len(ups) == 1, list(anim.actions)
+
+
+def test_a_small_gap_ends_the_drag():
+    """Measured on the user's camera: touching reads ~0.12 and a 2-3 cm
+    gap ~0.22-0.40.  A drag must end once the fingers come apart, even
+    when the gap stays well under the old fixed release distance (0.50)."""
+    eng, log = engine(), []
+    t = run(eng, make_point(200, 300), 0.5, 0.0, log)
+    t = run(eng, pinch_point(200, 300, 0.12), 0.7, t, log)
+    assert of(log, "mouse_down"), log
+    t = run(eng, pinch_point(200, 300, 0.30), 0.4, t, log)
+    assert len(of(log, "mouse_up")) == 1, log
+
+
+def test_a_loose_pinch_still_drags_and_releases():
+    """A pinch that only closes to ~0.22 (also measured) still drags, and
+    ends when the fingers open from there."""
+    eng, log = engine(), []
+    t = run(eng, make_point(200, 300), 0.5, 0.0, log)
+    t = run(eng, pinch_point(200, 300, 0.22), 0.7, t, log)
+    assert of(log, "mouse_down"), log
+    assert not of(log, "mouse_up"), log
+    t = run(eng, pinch_point(200, 300, 0.36), 0.4, t, log)
+    assert len(of(log, "mouse_up")) == 1, log
+
+
+def test_a_steady_wide_gap_never_presses():
+    """Pointing with a 2-3 cm gap that reads 0.34 (the screenshot case)
+    never presses the button."""
+    eng, log = engine(), []
+    t = run(eng, make_point(200, 300), 0.5, 0.0, log)
+    t = run(eng, pinch_point(200, 300, 0.34), 1.0, t, log)
+    assert not of(log, "mouse_down") and not of(log, "click"), log
 
 
 if __name__ == "__main__":

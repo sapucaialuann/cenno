@@ -246,8 +246,14 @@ DISPLAY_EDGE_FRAMES = 3        # frames in a row past the edge (kills jitter)
 POINT_INDEX_MIN_RATIO = 0.90   # index must be at least this straight ...
 POINT_STAY_MIN_RATIO = 0.82    # ... to enter pointing; once in, it may bend
                                # this far (pinching bends it) without leaving
-PINCH_ON = 0.33                # thumb-index distance (palms) to press ...
-PINCH_OFF = 0.50               # ... and to release (hysteresis)
+# Measured on a MacBook camera (2026-11-02): fingertips touching read about
+# 0.12-0.30, a 2-3 cm gap 0.22-0.40.  The two overlap, so the release does
+# not wait for a fixed distance: it comes as soon as the fingers move apart
+# from how close they got during this pinch.
+PINCH_ON = 0.25                # thumb-index distance (palms) to press ...
+PINCH_OFF = 0.40               # ... released for sure past this ...
+PINCH_RELEASE_RISE = 0.10      # ... or once this far above the closest point
+                               # of this pinch (the fingers came apart)
 PINCH_RELEASE_FRAMES = 2       # frames in a row needed to release (press is
                                # instant so quick taps are never missed)
 PINCH_SMOOTH_ALPHA = 0.7       # EMA on the pinch distance (fingertips jitter)
@@ -703,6 +709,7 @@ class GestureEngine:
         self.pinched = False
         self.pinch_votes = 0
         self.pinch_s = None
+        self.pinch_low = PINCH_OFF          # closest point of the current pinch
         self.dragging = False
         self.pinch_start = 0.0
         self.freeze_pos = None
@@ -1251,14 +1258,19 @@ class GestureEngine:
 
         # A press needs a clearly straight index: closing the hand into a
         # fist also brings thumb and index together, and must not click.
+        if self.pinched:
+            # The closest the fingers have been during this pinch.
+            self.pinch_low = min(self.pinch_low, pinch)
+        release_at = min(PINCH_OFF, self.pinch_low + PINCH_RELEASE_RISE)
         want = ((pinch <= PINCH_ON and index_ratio >= POINT_INDEX_MIN_RATIO)
-                if not self.pinched else not (pinch >= PINCH_OFF))
+                if not self.pinched else not (pinch >= release_at))
         self.pinch_votes = self.pinch_votes + 1 if want != self.pinched else 0
         flip = self.pinch_votes >= (PINCH_RELEASE_FRAMES if self.pinched else 1)
         if flip:
             self.pinch_votes = 0
         if flip and not self.pinched:
             self.pinched, self.dragging, self.pinch_start = True, False, now
+            self.pinch_low = pinch
             # Freeze where the cursor was just before the fingers closed.
             past = [p for t, p in self.cursor_hist if t <= now - PINCH_LOOKBACK_SECONDS]
             self.freeze_pos = past[-1] if past else (self.cursor or live)
