@@ -12,7 +12,8 @@ while recording, or it will act on the gestures.
     .venv-build/bin/python tools/gesture_check.py record      # ~6 min, saves checks/<time>.json
     python3 tools/gesture_check.py report [checks/<file>.json] # replay + report (latest by default)
 
-Keys in the recording window:  n = next step,  r = redo this step,  q = stop and save.
+Each step waits until the gesture is recognised; the panel says why it is not.
+Keys in the recording window:  s = skip (cannot do it),  r = redo this step,  q = stop and save.
 """
 
 import glob
@@ -143,12 +144,188 @@ def judge(step, counts):
 
 
 # =============================================================================
+# Why is it not recognised?  Live explanations for the recording window
+# =============================================================================
+
+# The pose each step needs, and the kind of movement it checks.
+STEP_POSE = {
+    "spotlight": "gather", "spotlight_face": "gather",
+    "slap_right": "open", "slap_left": "open", "swipe_up": "open", "swipe_down": "open",
+    "wave": "open", "scroll_down": "two", "scroll_up": "two", "back_forward": "two",
+    "point_move": "point", "point_gap": "point", "click": "point", "drag": "point",
+    "volume": "ok", "thumbs_up": "thumbs_up", "thumbs_down": "thumbs_down",
+    "thumb_left": "thumb_left", "thumb_right": "thumb_right",
+    "shaka": "shaka", "shaka_ear": "shaka", "horns": "horns",
+}
+STEP_MOTION = {
+    "slap_right": "slap", "slap_left": "slap", "swipe_up": "swipe", "swipe_down": "swipe",
+    "back_forward": "nav", "wave": "wave", "scroll_down": "scroll", "scroll_up": "scroll",
+    "click": "pinch", "drag": "pinch",
+}
+HOLD_SECONDS = {"thumbs_up": core.THUMBS_UP_HOLD_SECONDS,
+                "thumbs_down": core.THUMBS_DOWN_HOLD_SECONDS,
+                "shaka": core.SHAKA_HOLD_SECONDS, "horns": core.PAUSE_HOLD_SECONDS}
+
+
+def pose_checks(target, pts, palm):
+    """[(label, ok, measured)] for the conditions of `target`, so the user
+    sees which one fails.  Mirrors classify_pose (same constants)."""
+    r = {f: core.finger_ratio(pts, f) for f in core.FINGERS}
+    ext = lambda f: (f"{f} straight", r[f] >= core.EXTENDED_RATIO, f"{r[f]:.2f} need >= {core.EXTENDED_RATIO}")
+    curl = lambda f: (f"{f} curled", r[f] <= core.CURLED_RATIO, f"{r[f]:.2f} need <= {core.CURLED_RATIO}")
+    d = lambda a, b: core.dist(pts[a], pts[b]) / palm
+    spread = core.fingertip_spread(pts) / palm
+    pinch = d(4, 8)
+    thumb_len = d(4, 2)
+    if target == "gather":
+        return [("fingertips together", spread <= core.GATHER_MAX_SPREAD,
+                 f"spread {spread:.2f} need <= {core.GATHER_MAX_SPREAD}"),
+                ("thumb at index", pinch <= core.PINCH_MAX * 1.3,
+                 f"{pinch:.2f} need <= {core.PINCH_MAX * 1.3:.2f}")] + [
+                (f"{f} not curled", r[f] > core.CURLED_RATIO, f"{r[f]:.2f} need > {core.CURLED_RATIO}")
+                for f in core.FINGERS]
+    if target == "open":
+        return [("fingers spread", spread >= core.OPEN_MIN_SPREAD,
+                 f"spread {spread:.2f} need >= {core.OPEN_MIN_SPREAD}")]
+    if target == "point":
+        return [("index straight", r["index"] >= core.POINT_INDEX_MIN_RATIO,
+                 f"{r['index']:.2f} need >= {core.POINT_INDEX_MIN_RATIO}"),
+                curl("middle"), curl("ring"), curl("pinky")]
+    if target == "two":
+        return [ext("index"), ext("middle"), curl("ring"), curl("pinky")]
+    if target == "ok":
+        others = sum(r[f] > core.CURLED_RATIO for f in ("middle", "ring", "pinky"))
+        return [("thumb touches index", pinch <= core.PINCH_MAX, f"{pinch:.2f} need <= {core.PINCH_MAX}"),
+                ("middle away from thumb", d(4, 12) >= core.OK_OTHER_MIN,
+                 f"{d(4, 12):.2f} need >= {core.OK_OTHER_MIN}"),
+                ("other fingers up", others >= 2, f"{others} of 3 need >= 2")]
+    if target == "shaka":
+        return [curl("index"), curl("middle"), curl("ring"), ext("pinky"),
+                ("thumb out", thumb_len >= core.THUMB_UP_MIN_LEN,
+                 f"{thumb_len:.2f} need >= {core.THUMB_UP_MIN_LEN}"),
+                ("thumb far from pinky", d(4, 20) >= core.SHAKA_MIN_SPAN,
+                 f"{d(4, 20):.2f} need >= {core.SHAKA_MIN_SPAN}")]
+    if target == "horns":
+        fold = min(d(4, 9), d(4, 13))
+        return [ext("index"), ext("pinky"), curl("middle"), curl("ring"),
+                ("thumb folded on palm", fold < core.HORNS_THUMB_FOLD_MAX,
+                 f"{fold:.2f} need < {core.HORNS_THUMB_FOLD_MAX}")]
+    if target in ("thumbs_up", "thumbs_down", "thumb_left", "thumb_right"):
+        rest = [p for i, p in enumerate(pts) if i not in (3, 4)]
+        tip = pts[4]
+        if target == "thumbs_up":
+            m = (min(p[1] for p in rest) - tip[1]) / palm
+            need, ln = core.THUMB_UP_MARGIN, core.THUMB_UP_MIN_LEN
+            what = "thumb above the fist"
+        elif target == "thumbs_down":
+            m = (tip[1] - max(p[1] for p in rest)) / palm
+            need, ln = core.THUMB_UP_MARGIN, core.THUMB_DOWN_MIN_LEN
+            what = "thumb below the fist"
+        elif target == "thumb_left":
+            m = (min(p[0] for p in rest) - tip[0]) / palm
+            need, ln = core.THUMB_SIDE_MARGIN, core.THUMB_UP_MIN_LEN
+            what = "thumb left of the fist"
+        else:
+            m = (tip[0] - max(p[0] for p in rest)) / palm
+            need, ln = core.THUMB_SIDE_MARGIN, core.THUMB_UP_MIN_LEN
+            what = "thumb right of the fist"
+        return [curl("index"), curl("middle"), curl("ring"), curl("pinky"),
+                ("thumb stretched", thumb_len >= ln, f"{thumb_len:.2f} need >= {ln}"),
+                (what, m >= need, f"{m:+.2f} need >= {need}")]
+    return []
+
+
+class Coach:
+    """Collects what the engine sees during a step and turns it into a few
+    short lines: which pose condition fails, or how far the last movement
+    was from what is needed."""
+
+    def __init__(self, step_id):
+        self.id = step_id
+        self.target = STEP_POSE.get(step_id)
+        self.motion = STEP_MOTION.get(step_id)
+        self.strokes = []        # (t, dx, dy, v) recent swipe measurements
+        self.pinch_min = None
+
+    def lines(self, eng, pts, w, h, now):
+        """[(text, ok)] for the panel; ok None = neutral info."""
+        out = []
+        if pts is None:
+            return [("no hand in view", False)]
+        palm = max(eng.ema_palm or core.palm_size(pts), 1.0)
+        mpalm = eng.debug.get("mpalm", palm)
+        if self.target:
+            read = eng.pose
+            checks = pose_checks(self.target, pts, palm)
+            good = read == self.target or (self.target == "point" and read == "point")
+            out.append((f"reads as: {read.upper()}" + ("" if good else f"  (need {self.target.upper()})"),
+                        good))
+            if not good:
+                failing = [c for c in checks if not c[1]]
+                for label, ok, val in failing[:3]:
+                    out.append((f"{label}: {val}", False))
+                if not failing and checks:
+                    if read == "none":
+                        out.append(("pose not steady yet: hold it a moment", None))
+                    else:
+                        out.append((f"all {self.target} checks pass; taken by "
+                                    f"{read.upper()} first", False))
+            held = now - eng.pose_since
+            if good and self.id in HOLD_SECONDS and not eng.latched:
+                out.append((f"hold {held:.1f} / {HOLD_SECONDS[self.id]:.1f} s", None))
+        if eng.near_face and self.motion in ("slap", "swipe", "nav", "wave", "scroll", "pinch"):
+            out.append(("hand is at your face: movement ignored here", False))
+        if self.motion in ("slap", "swipe", "nav"):
+            if not eng.armed:
+                out.append(("hold still a moment to re-arm", False))
+            sw = eng.debug.get("swipe")
+            if sw:
+                self.strokes.append((now, sw[0], sw[1], sw[2]))
+            self.strokes = [s for s in self.strokes if now - s[0] < 1.5]
+            if self.strokes:
+                horiz = self.motion in ("slap", "nav")
+                best = max(self.strokes, key=lambda s: abs(s[1] if horiz else s[2]))
+                dist_ = abs(best[1] if horiz else best[2])
+                need_d = core.NAV_SWIPE_DISTANCE_PALMS if self.motion == "nav" else core.MIN_SWIPE_DISTANCE_PALMS
+                need_v = core.NAV_SWIPE_VELOCITY_PALMS if self.motion == "nav" else core.MIN_SWIPE_VELOCITY_PALMS
+                out.append((f"best stroke: {dist_:.1f} palms (need {need_d})", dist_ >= need_d))
+                out.append((f"speed: {best[3]:.1f} palms/s (need {need_v})", best[3] >= need_v))
+                if self.motion == "slap":
+                    frac = dist_ * mpalm / w
+                    out.append((f"travel: {100 * frac:.0f}% of width (need {100 * core.SLAP_MIN_TRAVEL_FRAC:.0f}%)",
+                                frac >= core.SLAP_MIN_TRAVEL_FRAC))
+        if self.motion == "wave":
+            out.append((f"direction changes: {len(eng.wave_flips)} / {core.WAVE_MIN_REVERSALS}", None))
+        if self.motion == "scroll" and eng.scroll_neutral is not None and eng.ema_c:
+            off = (eng.ema_c[1] - eng.scroll_neutral) / mpalm
+            way = "below" if off > 0 else "above"
+            out.append((f"hand {abs(off):.2f} palms {way} start (dead zone {core.JOY_DEADZONE_PALMS})",
+                        abs(off) > core.JOY_DEADZONE_PALMS))
+        if self.motion == "pinch" and eng.pose == "point":
+            p = eng.pinch_s if eng.pinch_s is not None else 0.0
+            self.pinch_min = p if self.pinch_min is None else min(self.pinch_min, p)
+            out.append((f"pinch {p:.2f} (press <= {core.PINCH_ON})", p <= core.PINCH_ON))
+            if eng.pinched:
+                held = now - eng.pinch_start
+                kind = "DRAG" if eng.dragging else ("click if released now" if held < core.CLICK_MAX_SECONDS else "becomes drag")
+                out.append((f"pressed {held:.2f} s: {kind}", None))
+        if self.id == "shaka_ear" and eng.pose == "shaka":
+            out.append((f"by the ear: {eng.debug.get('head_why', '?')}", bool(eng.debug.get("head"))))
+        return out
+
+
+# =============================================================================
 # Record
 # =============================================================================
 
 def record():
     import cv2
     import mediapipe as mp
+    import numpy as np
+    try:
+        import gesture_demos
+    except Exception:
+        gesture_demos = None
 
     modes = user_modes()
     hands = mp.solutions.hands.Hands(static_image_mode=False, max_num_hands=1,
@@ -164,18 +341,20 @@ def record():
         sys.exit("camera not available (is the terminal allowed to use the camera?)")
     win = "Cenno gesture check"
     cv2.namedWindow(win, cv2.WINDOW_NORMAL)
-    cv2.resizeWindow(win, 960, 720)
+    cv2.resizeWindow(win, 1280, 560)
     try:
         cv2.setWindowProperty(win, cv2.WND_PROP_TOPMOST, 1)
     except cv2.error:
         pass
     font = cv2.FONT_HERSHEY_SIMPLEX
+    GREEN, RED, GREY, WHITE, AMBER = (90, 220, 90), (80, 80, 255), (190, 190, 190), (255, 255, 255), (0, 200, 255)
+    PANEL_W = 640
 
-    def text(img, s, y, scale=0.6, color=(255, 255, 255), thick=2):
-        cv2.putText(img, s, (12, y), font, scale, (0, 0, 0), thick + 2, cv2.LINE_AA)
-        cv2.putText(img, s, (12, y), font, scale, color, thick, cv2.LINE_AA)
+    def text(img, s, x, y, scale=0.6, color=WHITE, thick=2):
+        cv2.putText(img, s, (x, y), font, scale, (0, 0, 0), thick + 2, cv2.LINE_AA)
+        cv2.putText(img, s, (x, y), font, scale, color, thick, cv2.LINE_AA)
 
-    def wrap(s, width=58):
+    def wrap(s, width=52):
         words, lines, cur = s.split(), [], ""
         for w_ in words:
             if len(cur) + len(w_) + 1 > width:
@@ -185,6 +364,53 @@ def record():
                 cur = f"{cur} {w_}".strip()
         return lines + [cur]
 
+    def compose(frame, step_i, step, phase, coach_lines, counts, missing, stray, now, t_step):
+        h, w = frame.shape[:2]
+        canvas = np.zeros((max(h, 480) + 80, w + PANEL_W, 3), np.uint8)
+        canvas[:] = (28, 28, 28)
+        canvas[80:80 + h, :w] = frame
+        # header: step and prompt
+        neg = not step["expect"]
+        tag = {"lead": ("GET READY", AMBER), "go": ("YOUR TURN", GREEN),
+               "done": ("DONE", GREEN), "neg": ("DON'T TRIGGER ANYTHING", AMBER)}[phase]
+        text(canvas, f"{step_i + 1}/{len(STEPS)}  {tag[0]}", 12, 28, 0.75, tag[1])
+        for k, line in enumerate(wrap(step["prompt"], 100)[:2]):
+            text(canvas, line, 12, 56 + 22 * k, 0.58)
+        # right panel: demo, then why-not lines
+        x0 = w + 16
+        if gesture_demos is not None:
+            try:
+                demo = gesture_demos.demo(step["id"])
+                if demo is not None:
+                    text(canvas, "HOW IT SHOULD LOOK", x0, 104, 0.55, GREY, 1)
+                    gesture_demos.draw(canvas, demo, t_step, (x0, 112, 320, 240))
+            except Exception as exc:
+                text(canvas, f"demo error: {exc}"[:60], x0, 130, 0.5, RED, 1)
+        else:
+            text(canvas, "(demo not available)", x0, 130, 0.5, GREY, 1)
+        y = 380
+        text(canvas, "WHAT CENNO SEES", x0, y, 0.55, GREY, 1)
+        y += 26
+        for s, ok in coach_lines[:6]:
+            col = GREY if ok is None else (GREEN if ok else RED)
+            mark = "" if ok is None else ("ok  " if ok else "x   ")
+            text(canvas, mark + s, x0, y, 0.52, col, 1)
+            y += 22
+        # progress
+        if neg:
+            prog = "nothing fired - good" if not counts else f"fired by mistake: {dict(counts)}"
+            text(canvas, prog, x0, y + 8, 0.55, GREEN if not counts else RED, 1)
+        else:
+            need = ", ".join(f"{k.replace('|', ' or ')} x{v}" for k, v in step["expect"].items())
+            got = ", ".join(f"{n} x{c}" for n, c in counts.items()) or "nothing yet"
+            text(canvas, f"need: {need}", x0, y + 8, 0.55, WHITE, 1)
+            text(canvas, f"got:  {got}", x0, y + 30, 0.55, GREEN if not missing else WHITE, 1)
+            if stray:
+                text(canvas, f"also fired (wrong): {stray}", x0, y + 52, 0.5, RED, 1)
+        text(canvas, "s skip (can't do it)   r redo   q stop and save", 12,
+             canvas.shape[0] - 10, 0.5, GREY, 1)
+        return canvas
+
     # Start screen: wait until the user is ready (and Cenno is off).
     while True:
         ok, frame = cap.read()
@@ -193,10 +419,10 @@ def record():
         frame = cv2.flip(frame, 1)
         h, w = frame.shape[:2]
         cv2.rectangle(frame, (0, 0), (w, 150), (0, 0, 0), -1)
-        text(frame, "Cenno gesture check", 30, 0.8, (0, 220, 255))
-        text(frame, "1. Switch Cenno OFF in the menu bar first", 64, 0.6)
-        text(frame, f"2. {len(STEPS)} short steps, ~6 min. Follow each prompt", 92, 0.6)
-        text(frame, "3. Press SPACE to start   (q = quit)", 120, 0.6, (0, 255, 0))
+        text(frame, "Cenno gesture check", 12, 30, 0.8, AMBER)
+        text(frame, "1. Switch Cenno OFF in the menu bar first", 12, 64, 0.6)
+        text(frame, "2. Each step waits until you do the gesture", 12, 92, 0.6)
+        text(frame, "3. Press SPACE to start   (q = quit)", 12, 120, 0.6, GREEN)
         cv2.imshow(win, frame)
         key = cv2.waitKey(1) & 0xFF
         if key == ord(" "):
@@ -206,26 +432,27 @@ def record():
             cv2.destroyAllWindows()
             sys.exit("cancelled")
 
-    rec = dict(version=1, created=time.strftime("%Y-%m-%d %H:%M:%S"),
+    rec = dict(version=2, created=time.strftime("%Y-%m-%d %H:%M:%S"),
                w=None, h=None, pointer_mode=modes[0], scroll_mode=modes[1],
                steps=[])
     quit_all = False
     i = 0
     while i < len(STEPS) and not quit_all:
         step = STEPS[i]
+        neg = not step["expect"]
         frames, counts = [], Counter()
         eng = new_engine(modes)
+        coach = Coach(step["id"])
+        last_lines = []
         t0 = time.monotonic()
+        done_at = None
         redo = skip = False
         while True:
-            now = time.monotonic()
-            el = now - t0
-            if el >= LEAD_SECONDS + step["seconds"]:
-                break
             ok, frame = cap.read()
             if not ok:
                 continue
             now = time.monotonic()
+            el = now - t0
             frame = cv2.flip(frame, 1)
             h, w = frame.shape[:2]
             rec["w"], rec["h"] = w, h
@@ -234,43 +461,44 @@ def record():
             res = hands.process(rgb)
             face = faces.update(rgb, w, h, now)
             lead = el < LEAD_SECONDS
-            pts3 = None
+            pts3 = pts = None
             if res.multi_hand_landmarks:
                 hl = res.multi_hand_landmarks[0]
                 pts3 = [[p.x * w, p.y * h, p.z * w] for p in hl.landmark]
-                ev = eng.update([(p[0], p[1]) for p in pts3], w, h, now, face=face)
+                pts = [(p[0], p[1]) for p in pts3]
+                ev = eng.update(pts, w, h, now, face=face)
                 draw.draw_landmarks(frame, hl, mp.solutions.hands.HAND_CONNECTIONS)
             else:
                 ev = eng.no_hand(now)
             if not lead:
                 counts.update(action_names(ev))
-            frames.append(dict(t=round(now - t0, 4), lead=lead,
+            frames.append(dict(t=round(now - t0, 4), lead=lead, w=w, h=h,
                                pts=[[round(v, 1) for v in p] for p in pts3] if pts3 else None,
                                face=[round(v, 1) for v in face] if face else None))
             if face:
                 cv2.rectangle(frame, (int(face[0]), int(face[1])), (int(face[2]), int(face[3])),
                               (120, 120, 120), 1)
-
-            # --- overlay ---
-            cv2.rectangle(frame, (0, 0), (w, 118), (0, 0, 0), -1)
-            head = f"{i + 1}/{len(STEPS)}  " + ("GET READY" if lead else "GO")
-            text(frame, head, 26, 0.7, (0, 220, 255) if lead else (0, 255, 0))
-            for k, line in enumerate(wrap(step["prompt"])[:3]):
-                text(frame, line, 54 + 24 * k, 0.6)
-            left = (LEAD_SECONDS - el) if lead else (LEAD_SECONDS + step["seconds"] - el)
-            cv2.putText(frame, f"{left:4.1f}s", (w - 90, 28), font, 0.7, (255, 255, 255), 2,
-                        cv2.LINE_AA)
             missing, stray = judge(step, counts)
-            status = f"pose: {eng.pose}"
-            text(frame, status, h - 62, 0.55, (220, 220, 220), 1)
-            got = ", ".join(f"{n} x{c}" for n, c in counts.items()) or "-"
-            ok_now = not missing and not stray
-            text(frame, "fired: " + got, h - 38, 0.55,
-                 (0, 255, 0) if ok_now and step["expect"] else (220, 220, 220), 1)
-            text(frame, "n next   r redo   q stop", h - 12, 0.45, (180, 180, 180), 1)
-            cv2.imshow(win, frame)
+            if not lead:
+                last_lines = coach.lines(eng, pts, w, h, now)
+            if lead:
+                phase = "lead"
+            elif neg:
+                phase = "neg"
+                if el >= LEAD_SECONDS + step["seconds"]:
+                    break                          # negative steps are timed
+            elif not missing:
+                phase = "done"
+                done_at = done_at or now
+                if now - done_at >= 1.2:           # a moment to see it worked
+                    break
+            else:
+                phase = "go"
+            canvas = compose(frame, i, step, phase, last_lines, counts, missing, stray,
+                             now, max(0.0, el - LEAD_SECONDS))
+            cv2.imshow(win, canvas)
             key = cv2.waitKey(1) & 0xFF
-            if key == ord("n"):
+            if key == ord("s"):
                 skip = True
                 break
             if key == ord("r"):
@@ -281,13 +509,17 @@ def record():
                 break
         if redo:
             continue
-        rec["steps"].append(dict(id=step["id"], prompt=step["prompt"], skipped=skip,
-                                 frames=frames))
         missing, stray = judge(step, counts)
-        verdict = "ok" if not missing and not stray else "CHECK"
-        print(f"{step['id']:15s} {verdict:5s} fired={dict(counts)}"
+        result = ("skipped" if skip else "stopped" if quit_all else
+                  ("clean" if not counts else "false triggers") if neg else "done")
+        rec["steps"].append(dict(id=step["id"], prompt=step["prompt"], skipped=skip or quit_all,
+                                 result=result, seconds=round(time.monotonic() - t0 - LEAD_SECONDS, 1),
+                                 why=[s for s, ok in last_lines if ok is False],
+                                 frames=frames))
+        print(f"{step['id']:15s} {result:14s} {rec['steps'][-1]['seconds']:5.1f}s fired={dict(counts)}"
               + (f" missing={missing}" if missing else "")
-              + (f" stray={stray}" if stray else ""))
+              + (f" stray={stray}" if stray else "")
+              + (f" why={rec['steps'][-1]['why']}" if skip else ""))
         i += 1
 
     cap.release()
@@ -302,7 +534,6 @@ def record():
     print(f"\nsaved {path}  ({len(rec['steps'])} steps)")
     return path
 
-
 # =============================================================================
 # Replay + report
 # =============================================================================
@@ -313,12 +544,14 @@ def replay_step(rec, step_rec, modes=None):
     modes = modes or (rec.get("pointer_mode", core.POINTER_MODE),
                       rec.get("scroll_mode", core.SCROLL_MODE))
     eng = new_engine(modes)
-    w, h = rec["w"], rec["h"]
     counts, poses = Counter(), Counter()
     pinch, spread, near = [], [], 0
     judged = 0
     for fr in step_rec["frames"]:
         t = fr["t"]
+        # The camera can change its frame size mid-session, so the size is
+        # kept per frame (older recordings: one size for the whole file).
+        w, h = fr.get("w", rec["w"]), fr.get("h", rec["h"])
         if fr["pts"]:
             pts = [(p[0], p[1]) for p in fr["pts"]]
             ev = eng.update(pts, w, h, t, face=tuple(fr["face"]) if fr["face"] else None)
