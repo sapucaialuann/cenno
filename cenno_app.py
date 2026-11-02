@@ -195,6 +195,7 @@ class Tracker(threading.Thread):
         self.settings = settings
         self.engine = core.GestureEngine()
         self.dispatcher = core.Dispatcher()
+        self.engine.can_step_display = self.dispatcher.can_step
         self.stop_flag = threading.Event()
         self.lock = threading.Lock()
         self.preview_frame = None
