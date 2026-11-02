@@ -405,7 +405,11 @@ class Tracker(threading.Thread):
         x0 = y0 = theme.SPACE[3] * s2
         pose = self.engine.pose
         if self.engine.paused:
-            pill(x0, y0, "PAUSED", col("paper-raised"), col("ink"), col("line-strong"))
+            wd = pill(x0, y0, "PAUSED", col("paper-raised"), col("ink"), col("line-strong"))
+            if pose != "none":
+                # Still show what is read, so a misread horns is visible.
+                pill(x0 + wd + gap, y0, pose.upper(), col("paper-raised"), col("ink"),
+                     col("line-strong"))
         elif pose == "none":
             pill(x0, y0, "NO HAND", col("paper-raised"), col("ember-ink"), col("line-strong"))
         else:

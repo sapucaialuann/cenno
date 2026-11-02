@@ -304,7 +304,13 @@ WAVE_MIN_REVERSALS = 3         # direction changes needed (two full waves)
 WAVE_WINDOW_SECONDS = 1.5      # ...all within this long
 WAVE_COOLDOWN_SECONDS = 3.0    # one lock per wave
 PAUSE_HOLD_SECONDS = 1.0       # rock horns held this long pauses / resumes (0 = off)
-HORNS_THUMB_MAX_SPAN = 0.85    # thumb tip to pinky tip below this = thumb tucked
+HORNS_THUMB_FOLD_MAX = 0.5     # thumb tip this close (palms) to the middle or ring
+                              # knuckle = thumb folded across the palm.  Works
+                              # whichever finger it rests on and however the
+                              # hand is turned; "I love you" (thumb out) is ~0.75+
+HORNS_REDO_SECONDS = 0.15      # once horns has fired, another pose held this long
+                              # before horns returns makes it a new gesture; a
+                              # shorter dropout is tracking flicker (keeps latch)
 
 # --- Face zone (motion gestures are ignored while the hand is at the face) ---
 # Scratching your face or resting your chin on your hand looks like a swipe
@@ -420,8 +426,10 @@ def classify_pose(pts, palm):
         # Hang loose: thumb and pinky out, the three middle fingers curled.
         return "shaka", feats
     if (ext["index"] and ext["pinky"] and curl["middle"] and curl["ring"]
-            and dist(pts[4], pts[20]) / palm < HORNS_THUMB_MAX_SPAN):
-        # Rock horns: index and pinky up, middle and ring curled, thumb tucked.
+            and min(dist(pts[4], pts[9]), dist(pts[4], pts[13])) / palm
+            < HORNS_THUMB_FOLD_MAX):
+        # Rock horns: index and pinky up, middle and ring curled, thumb folded
+        # over the palm (shaka and "I love you" have the thumb out).
         return "horns", feats
     if all(curl.values()):
         thumb_len = dist(pts[4], pts[2]) / palm
@@ -863,6 +871,11 @@ class GestureEngine:
             self.latched = False
             if back[0] == raw_pose and now - back[3] <= HOLD_FLICKER_SECONDS:
                 self.pose_since, self.latched = back[1], back[2]
+                # A fired horns that returns after a real break (not a
+                # one-frame flicker) is a deliberate second gesture.
+                if (raw_pose == "horns" and back[2]
+                        and now - back[3] >= HORNS_REDO_SECONDS):
+                    self.pose_since, self.latched = now, False
             self.buf.clear()
             self._reset_pose_state()
             if (raw_pose == "gather"
