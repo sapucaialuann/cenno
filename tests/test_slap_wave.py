@@ -239,9 +239,11 @@ def test_wave_locks_and_does_not_change_space():
         eng, log = core.GestureEngine(), []
         t = hold(eng, template, 320, 300, 0.5, 0.0, log)
         # Four short strokes back and forth, well inside the wave window.
+        # +-60 px covers ~1.7 palms side to side, like the recorded real
+        # waves (2.1 and 2.8): a narrower shake is not a wave (#15).
         x = 320.0
         for i in range(4):
-            x = 320.0 + (34.0 if i % 2 == 0 else -34.0)
+            x = 320.0 + (60.0 if i % 2 == 0 else -60.0)
             t = sweep(eng, template, 320.0, x, 0.16, t, log)
             t = sweep(eng, template, x, 320.0, 0.16, t, log)
         t = hold(eng, template, 320, 300, 0.6, t, log)
