@@ -21,9 +21,10 @@ frame, so they work whether you sit close to the camera or across the room):
                               down, above it up, and it stops dead at the end
     * swipe right / left   -> Back / Forward               (Cmd+[ / Cmd+])
 
-  POINT (index up, middle / ring / pinky curled)
+  POINT (index across the frame, hand on its side, thumb below)
     * move                 -> moves the mouse cursor
-    * pinch thumb + index  -> click; two quick pinches = double-click;
+    * pinch thumb tip to index tip
+                           -> click; two quick pinches = double-click;
                               pinch and hold = drag (release to drop)
 
   OK SIGN (thumb + index tips touching, other fingers UP)
@@ -2510,8 +2511,8 @@ HELP_LINES_MAC = (
     "2 fingers down / up     scroll (gas pedal)"
     if SCROLL_MODE == "joystick" else "2 fingers move / flick  scroll (glides)",
     "2 fingers swipe -> <-   back / forward",
-    "point index finger      move cursor",
-    "pinch while pointing    click (x2 / hold=drag)",
+    "point sideways          move cursor",
+    "pinch thumb to index    click (x2 / hold=drag)",
     "OK sign + twist         volume",
     "thumbs up (hold)        play / pause",
     "hang loose (hold)       dictation on / off",
@@ -2529,8 +2530,8 @@ HELP_LINES_WIN = (
     "2 fingers down / up     scroll (gas pedal)"
     if SCROLL_MODE == "joystick" else "2 fingers move / flick  scroll (glides)",
     "2 fingers swipe -> <-   back / forward",
-    "point index finger      move cursor",
-    "pinch while pointing    click (x2 / hold=drag)",
+    "point sideways          move cursor",
+    "pinch thumb to index    click (x2 / hold=drag)",
     "OK sign + twist         volume",
     "thumbs up (hold)        play / pause",
     "hang loose (hold)       dictation on / off",
