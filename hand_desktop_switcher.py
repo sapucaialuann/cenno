@@ -523,6 +523,19 @@ def near_face(pts, face):
     return x0 <= palm_x <= x1 and y0 <= palm_y <= y1
 
 
+def pinch_at_face(pts, face):
+    """True when the thumb tip or the index tip is on the face (inside the
+    grown face box).  A hand on the mouth or chin keeps its palm below the
+    face, so near_face misses it, but the pinch fingers are on the face."""
+    if not face:
+        return False
+    x0, y0, x1, y1 = face
+    mx = FACE_MARGIN * max(x1 - x0, 0.0)
+    my = FACE_MARGIN * max(y1 - y0, 0.0)
+    return any(x0 - mx <= pts[i][0] <= x1 + mx and y0 - my <= pts[i][1] <= y1 + my
+               for i in (4, 8))
+
+
 class OneEuro:
     """One Euro filter (Casiez et al. 2012): the cutoff frequency rises with
     speed, so a still hand is heavily smoothed and a moving one is not."""
@@ -631,6 +644,7 @@ class GestureEngine:
         self.last_click_time = -1e9
         self.last_click_pos = (0.0, 0.0)
         self.near_face = False
+        self.pinch_at_face = False
         # Copied out of the constant so the apps can switch modes at runtime.
         self.pointer_mode = POINTER_MODE
         # The cursor in relative mode outlives the pointing session, so it
@@ -654,6 +668,7 @@ class GestureEngine:
         self.ema_c = None
         self.ema_palm = None
         self.near_face = False
+        self.pinch_at_face = False
         self.ready_since = None
         self.buf = deque()
         self.armed = True
@@ -919,6 +934,7 @@ class GestureEngine:
         # Hand at the face?  Motion gestures are ignored there (scratching
         # your face looks like a swipe), but hold poses still work.
         self.near_face = near_face(pts, face)
+        self.pinch_at_face = pinch_at_face(pts, face)
         if self.near_face:
             # Drop the scroll history too, so no flick is fired later on
             # from a stroke that started before the hand reached the face.
@@ -1388,9 +1404,10 @@ class GestureEngine:
         release_at = min(PINCH_OFF, self.pinch_low + PINCH_RELEASE_RISE)
         # No new press at the face: scratching or rubbing an eye can look
         # like a pinch.  The cursor still moves there, and a drag already
-        # held carries on (#9).
+        # held carries on (#9).  The pinch fingers count on their own: a
+        # hand on the mouth has its palm below the face (#25).
         want = ((pinch <= PINCH_ON and index_ratio >= POINT_INDEX_MIN_RATIO
-                 and not self.near_face)
+                 and not self.near_face and not self.pinch_at_face)
                 if not self.pinched else not (pinch >= release_at))
         self.pinch_votes = self.pinch_votes + 1 if want != self.pinched else 0
         flip = self.pinch_votes >= (PINCH_RELEASE_FRAMES if self.pinched else 1)

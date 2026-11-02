@@ -323,9 +323,9 @@ def test_point_without_a_face_moves_the_pointer():
     assert "pointer_move" in names(log), log
 
 
-def pinch_hand():
+def pinch_hand(cy=300):
     """The pointer hand with the thumb tip on the index tip."""
-    pts = point_hand()
+    pts = point_hand(cy=cy)
     pts[4] = (pts[8][0] - 5, pts[8][1] + 5)
     return pts
 
@@ -336,6 +336,22 @@ def test_pinch_at_the_face_does_not_click():
     t = run(eng, point_hand(), 0.3, 0.0, log, face=FACE_BOX)
     t = run(eng, pinch_hand(), 0.2, t, log, face=FACE_BOX)
     run(eng, point_hand(), 0.3, t, log, face=FACE_BOX)
+    assert "click" not in names(log), log
+    assert "mouse_down" not in names(log), log
+
+
+def test_pinch_on_the_mouth_does_not_click():
+    """Fingers on the mouth, palm below the chin: near_face misses it, the
+    pinch fingers are on the face, so no click (#25)."""
+    hand_point, hand_pinch = point_hand(cy=330), pinch_hand(cy=330)
+    # The face box ends just below the fingertips: the palm is outside.
+    tip_y = min(p[1] for p in hand_pinch)
+    face = (200.0, 40.0, 440.0, tip_y + 20)
+    assert not core.near_face(hand_pinch, face)
+    eng, log = core.GestureEngine(), []
+    t = run(eng, hand_point, 0.3, 0.0, log, face=face)
+    t = run(eng, hand_pinch, 0.2, t, log, face=face)
+    run(eng, hand_point, 0.3, t, log, face=face)
     assert "click" not in names(log), log
     assert "mouse_down" not in names(log), log
 
