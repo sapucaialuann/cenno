@@ -1141,13 +1141,11 @@ class GestureEngine:
             self.debug["knob"] = (self.knob_angle - self.knob_ref) * VOLUME_DIRECTION
 
         # Mouse pointer.
-        if self.pose == "point" and not self.near_face:
+        # Pointing works in front of the face too: on a laptop camera the
+        # face fills the middle of the frame (#9).
+        if self.pose == "point":
             self._pointer_step(pts, w, h, now, feats["pinch"],
                                feats["ratios"]["index"], ev)
-        elif self.near_face and self.pointer_live:
-            # The hand went to the face: end the pointer cleanly, so no
-            # cursor is left running behind the user's face.
-            self._pointer_end(ev)
 
         # Two-finger scroll: drag follows the hand, flicks glide.
         if self.pose == "two" and warmed and step is not None and not self.near_face:
@@ -1388,7 +1386,11 @@ class GestureEngine:
             # The closest the fingers have been during this pinch.
             self.pinch_low = min(self.pinch_low, pinch)
         release_at = min(PINCH_OFF, self.pinch_low + PINCH_RELEASE_RISE)
-        want = ((pinch <= PINCH_ON and index_ratio >= POINT_INDEX_MIN_RATIO)
+        # No new press at the face: scratching or rubbing an eye can look
+        # like a pinch.  The cursor still moves there, and a drag already
+        # held carries on (#9).
+        want = ((pinch <= PINCH_ON and index_ratio >= POINT_INDEX_MIN_RATIO
+                 and not self.near_face)
                 if not self.pinched else not (pinch >= release_at))
         self.pinch_votes = self.pinch_votes + 1 if want != self.pinched else 0
         flip = self.pinch_votes >= (PINCH_RELEASE_FRAMES if self.pinched else 1)

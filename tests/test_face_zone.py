@@ -308,12 +308,12 @@ def test_two_finger_stroke_without_a_face_scrolls():
     assert "scroll_drag" in names(log), log
 
 
-# --- 6. the pointer at the face does nothing -------------------------------
+# --- 6. pointing works at the face (#9) -------------------------------------
 
-def test_point_at_the_face_does_not_move_the_pointer():
+def test_point_at_the_face_moves_the_pointer():
     eng, log = core.GestureEngine(), []
     run(eng, point_hand(), 0.5, 0.0, log, face=FACE_BOX)
-    assert "pointer_move" not in names(log), log
+    assert "pointer_move" in names(log), log
     assert "click" not in names(log), log
 
 
@@ -323,15 +323,42 @@ def test_point_without_a_face_moves_the_pointer():
     assert "pointer_move" in names(log), log
 
 
-def test_pointer_ends_cleanly_when_the_hand_reaches_the_face():
+def pinch_hand():
+    """The pointer hand with the thumb tip on the index tip."""
+    pts = point_hand()
+    pts[4] = (pts[8][0] - 5, pts[8][1] + 5)
+    return pts
+
+
+def test_pinch_at_the_face_does_not_click():
+    """Scratching the face can look like a pinch: no click there (#9)."""
+    eng, log = core.GestureEngine(), []
+    t = run(eng, point_hand(), 0.3, 0.0, log, face=FACE_BOX)
+    t = run(eng, pinch_hand(), 0.2, t, log, face=FACE_BOX)
+    run(eng, point_hand(), 0.3, t, log, face=FACE_BOX)
+    assert "click" not in names(log), log
+    assert "mouse_down" not in names(log), log
+
+
+def test_pinch_away_from_the_face_clicks():
+    """The same pinch without a face clicks: the test above is not
+    passing just because the synthetic pinch never registers."""
+    eng, log = core.GestureEngine(), []
+    t = run(eng, point_hand(), 0.3, 0.0, log)
+    t = run(eng, pinch_hand(), 0.2, t, log)
+    run(eng, point_hand(), 0.3, t, log)
+    assert "click" in names(log), log
+
+
+def test_pointer_continues_when_the_hand_reaches_the_face():
     eng, log = core.GestureEngine(), []
     run(eng, point_hand(), 0.3, 0.0, log, face=None)
     assert "pointer_move" in names(log), log
     mark = len(log)
     run(eng, point_hand(), 0.3, 0.3, log, face=FACE_BOX)
     tail = [n for _, n in log[mark:]]
-    assert "pointer_end" in tail, tail
-    assert "pointer_move" not in tail, tail
+    assert "pointer_move" in tail, tail
+    assert "pointer_end" not in tail, tail
 
 
 # --- the flag itself -------------------------------------------------------
