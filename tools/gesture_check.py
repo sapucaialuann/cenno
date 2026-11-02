@@ -30,7 +30,18 @@ sys.path.insert(0, ROOT)
 import hand_desktop_switcher as core          # noqa: E402
 
 CHECKS_DIR = os.path.join(ROOT, "checks")
-SETTINGS_PATH = os.path.expanduser("~/Library/Application Support/Cenno/settings.json")
+
+
+def settings_path(platform=sys.platform):
+    """Where the app keeps its settings: the macOS Application Support
+    folder, or %APPDATA% on Windows (same place as cenno_app_win.py)."""
+    if platform == "win32":
+        return os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")),
+                            "Cenno", "settings.json")
+    return os.path.expanduser("~/Library/Application Support/Cenno/settings.json")
+
+
+SETTINGS_PATH = settings_path()
 LEAD_SECONDS = 3.0           # "get ready" before each step (recorded, not judged)
 
 # Events that are not actions: never counted as a mistake.
@@ -166,20 +177,33 @@ def user_modes():
         return core.POINTER_MODE, core.SCROLL_MODE
 
 
+def app_running(platform=sys.platform):
+    """True while the Cenno app process runs.  Windows has no pgrep, so
+    tasklist is asked for Cenno.exe there."""
+    import subprocess
+    if platform == "win32":
+        try:
+            found = subprocess.run(["tasklist", "/FI", "IMAGENAME eq Cenno.exe", "/NH"],
+                                   capture_output=True, text=True)
+        except OSError:
+            return False
+        return "cenno.exe" in found.stdout.lower()
+    found = subprocess.run(["pgrep", "-f", "Cenno.app/Contents/MacOS/Cenno"],
+                           capture_output=True)
+    return found.returncode == 0
+
+
 def cenno_tracking():
     """True while the Cenno app runs with gestures switched on.  It would
     share the camera and the CPU (halving the frame rate of both) and act
     on the gestures being checked."""
-    import subprocess
     try:
         with open(SETTINGS_PATH) as f:
             if not json.load(f).get("enabled", True):
                 return False
     except Exception:
         pass
-    found = subprocess.run(["pgrep", "-f", "Cenno.app/Contents/MacOS/Cenno"],
-                           capture_output=True)
-    return found.returncode == 0
+    return app_running()
 
 
 def new_engine(modes):
