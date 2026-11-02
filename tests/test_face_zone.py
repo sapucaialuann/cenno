@@ -352,11 +352,22 @@ def test_face_box_is_grown_by_the_margin():
 
 
 def test_hand_share_threshold():
-    # 6 of 21 landmarks inside is below the 30% share -> not at the face.
+    # 12 of 21 landmarks inside is below the 60% share (and palm center outside) -> not at the face.
     box = (0.0, 0.0, 100.0, 100.0)
-    hand = [(10.0, 10.0)] * 6 + [(500.0, 500.0)] * 15
+    hand = [(10.0, 10.0)] * 12 + [(500.0, 500.0)] * 9
     assert not core.near_face(hand, box)
-    hand = [(10.0, 10.0)] * 7 + [(500.0, 500.0)] * 14
+    # 13 of 21 landmarks inside is >= 60% share -> at the face.
+    hand = [(10.0, 10.0)] * 13 + [(500.0, 500.0)] * 8
+    assert core.near_face(hand, box)
+
+
+def test_palm_centre_inside_face_box():
+    # Palm centre inside the box triggers near_face even below the landmark share.
+    box = (0.0, 0.0, 100.0, 100.0)
+    # Only 5 palm landmarks inside (5/21 = 24% < 60%), but palm centre is at (50, 50).
+    hand = [(500.0, 500.0)] * 21
+    for i in core.FACE_PALM_INDICES:
+        hand[i] = (50.0, 50.0)
     assert core.near_face(hand, box)
 
 
