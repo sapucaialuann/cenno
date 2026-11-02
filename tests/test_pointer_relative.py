@@ -45,6 +45,9 @@ def make_point(cx=320, cy=300, scale=1.0, pinch=False):
 def engine(mode="relative"):
     eng = core.GestureEngine()
     eng.pointer_mode = mode
+    # A neighbour on every side, so edge pushes can step.  The wall case
+    # lives in test_edge_wall.py.
+    eng.can_step_display = lambda d: True
     return eng
 
 
@@ -295,7 +298,7 @@ def test_relative_pushing_the_edge_changes_the_display():
     # keep pushing
     t = glide(eng, x, x + 40, 0.5, t, log)
     st = steps(log)
-    assert st == [(1, 0)], st
+    assert st == [((1, 0), st[0][1])], st
     assert abs(cursor_x(log) - core.REL_EDGE_RESTART) < 0.05, cursor_x(log)
 
 
@@ -317,7 +320,7 @@ def test_relative_edge_push_rearms_only_after_leaving_the_edge():
     t = run(eng, make_point(200, 300), 0.5, 0.0, log)
     x, t = creep(eng, 200, t, log)
     t = glide(eng, x, x + 40, 0.5, t, log)
-    assert steps(log) == [(1, 0)], steps(log)
+    assert [s[0] for s in steps(log)] == [(1, 0)], steps(log)
     # the cursor is just inside the left edge now, so it is not pushing at
     # an edge any more
     assert cursor_x(log) < 0.2, cursor_x(log)

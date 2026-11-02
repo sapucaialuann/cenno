@@ -558,6 +558,9 @@ class GestureEngine:
         # The cursor in relative mode outlives the pointing session, so it
         # is kept here and not in _reset_pose_state.
         self.rel_cursor = (0.5, 0.5)
+        # Asks whether a screen exists in a direction; the apps wire it to
+        # Dispatcher.can_step.  None means "no neighbour": edges are walls.
+        self.can_step_display = None
         self.ptt_active = False            # kept across hand resets: see _ptt_end
         self.ptt_since = 0.0
         self._reset_hand()
@@ -1045,9 +1048,12 @@ class GestureEngine:
             d = (0, -1)
         else:
             return
-        ev.append(("display_step", d))
-        self.rel_edge_armed = False
         self.rel_push = (0.0, 0.0)
+        if not self._can_step(d):
+            # No screen on that side: the edge is a wall.  The cursor stays
+            # on it and the push starts counting from zero again.
+            return
+        self.rel_edge_armed = False
         # Pushing right lands on the left edge of the next screen.
         cx, cy = self.rel_cursor
         if d[0] > 0:
@@ -1059,6 +1065,15 @@ class GestureEngine:
         else:
             cy = 1.0 - REL_EDGE_RESTART
         self.rel_cursor = (cx, cy)
+        # The landing spot travels with the step so the cursor goes straight
+        # there instead of gliding over from the old screen's position.
+        ev.append(("display_step", (d, self.rel_cursor)))
+
+    def _can_step(self, d):
+        try:
+            return bool(self.can_step_display and self.can_step_display(d))
+        except Exception:
+            return False
 
     def _edge_step(self, raw, ev):
         """Knuckles pushed clearly past an edge of the box: ask for the
@@ -1080,7 +1095,8 @@ class GestureEngine:
         self.edge_votes = self.edge_votes + 1 if d == self.edge_dir else 1
         self.edge_dir = d
         if self.edge_votes >= DISPLAY_EDGE_FRAMES:
-            ev.append(("display_step", d))
+            if self._can_step(d):
+                ev.append(("display_step", d))
             self.edge_armed = False
             self.edge_votes, self.edge_dir = 0, None
 
@@ -1465,18 +1481,34 @@ class Dispatcher:
         print(f"cursor -> display {index + 1} of {self.layout.count}")
         return True
 
-    def step_display(self, direction):
+    def _neighbor(self, direction):
+        """Index of the screen next to the cursor's in `direction`, or None
+        (one screen, "all displays" mode, or nothing on that side)."""
+        if self.layout.count < 2 or self.display_mode != DISPLAY_MODE_CURRENT:
+            return None
+        here = self.layout.screen_of(self.pointer.cursor_position() or self._raw_cursor())
+        return self.layout.neighbor(here, direction)
+
+    def can_step(self, direction):
+        """True when step_display(direction) would really move to a screen."""
+        return self._neighbor(direction) is not None
+
+    def step_display(self, step):
         """The hand pushed out of the pointer box: hand the pointer to the
         display on that side.  "All displays" already spans every screen, so
-        there it does nothing.  The hand's spot in the box keeps mapping the
-        same way, now onto the new screen."""
-        if self.layout.count < 2 or self.display_mode != DISPLAY_MODE_CURRENT:
-            return False
-        here = self.layout.screen_of(self.pointer.cursor_position() or self._raw_cursor())
-        index = self.layout.neighbor(here, direction)
+        there it does nothing.  `step` is a plain direction (absolute mode:
+        the hand's spot keeps mapping the same way, now onto the new screen)
+        or (direction, landing) from relative mode, where the cursor goes
+        exactly to the landing spot (0..1) of the new screen."""
+        landing = None
+        direction = step
+        if len(step) == 2 and isinstance(step[0], (tuple, list)):
+            direction, landing = step
+        direction = tuple(direction)
+        index = self._neighbor(direction)
         if index is None:
             return False
-        self.pointer.focus_display(index)
+        self.pointer.focus_display(index, landing)
         aim = self.pointer.target_pixel() or self.layout.center(index)
         self._warp(aim)
         print(f"pointer -> display {index + 1} of {self.layout.count}")
@@ -1810,13 +1842,18 @@ class PointerAnimator:
             self.rect = self.layout.map_rect(self.mode, self.display)
             self._update_target()
 
-    def focus_display(self, index):
+    def focus_display(self, index, landing=None):
         """Next point gesture aims at this screen, even if the cursor is
-        still somewhere else."""
+        still somewhere else.  With a landing spot (0..1) the aim is set
+        there on the new screen, so the cursor does not first go to where
+        the old spot would map and then glide across."""
         with self.lock:
             self.display = index
             if self.mode != DISPLAY_MODE_ALL:
                 self.rect = self.layout.map_rect(self.mode, index)
+                if landing is not None:
+                    self.target_n = (min(1.0, max(0.0, landing[0])),
+                                     min(1.0, max(0.0, landing[1])))
                 self._update_target()
 
     def cursor_position(self):
@@ -2165,6 +2202,7 @@ def main():
     face_tracker = FaceTracker(mp.solutions.face_detection)
     engine = GestureEngine()
     dispatcher = Dispatcher()
+    engine.can_step_display = dispatcher.can_step
 
     cap = cv2.VideoCapture(CAMERA_INDEX)
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, FRAME_WIDTH)
