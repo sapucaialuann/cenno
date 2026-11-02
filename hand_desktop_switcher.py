@@ -1405,6 +1405,13 @@ class GestureEngine:
                                       and self.drag_anchor is not None) else self.cursor
             if at is not None:
                 ev.append(("mouse_up", at))
+        # The button is up now, so the pinch is over too.  Left set, the
+        # next pointing session (the hand coming back from the face) still
+        # thought it was dragging and sent a second release, and again on
+        # every pass through the face zone.
+        self.pinched = self.dragging = False
+        self.pinch_votes = 0
+        self.pinch_s = None
         self.drag_frozen = False
         self.drag_anchor = None
         self.drag_open_from = None

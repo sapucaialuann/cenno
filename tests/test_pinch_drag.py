@@ -437,6 +437,30 @@ def test_a_steady_wide_gap_never_presses():
     assert not of(log, "mouse_down") and not of(log, "click"), log
 
 
+def test_drag_cut_by_the_face_zone_releases_once():
+    """A drag whose hand passes through the face zone is dropped there,
+    once.  The pinch state used to survive the drop, so every exit from or
+    entry to the face zone sent another release (30 releases for 13
+    presses in a recorded session)."""
+    eng, log = engine(), []
+    t = run(eng, make_point(200, 300), 0.5, 0.0, log)
+    t = run(eng, pinch_point(200, 300, 0.10), 0.7, t, log)
+    assert len(of(log, "mouse_down")) == 1, log
+    face = (100.0, 150.0, 300.0, 450.0)          # over the hand
+    for _ in range(3):                            # in and out of the face zone
+        for k in range(6):
+            for name, arg in eng.update(pinch_point(200, 300, 0.10), 640, 480, t, face=face):
+                log.append((t, name, arg))
+            t += 1.0 / 30
+        for k in range(6):
+            for name, arg in eng.update(pinch_point(200, 300, 0.10), 640, 480, t, face=None):
+                log.append((t, name, arg))
+            t += 1.0 / 30
+    t = run(eng, make_point(200, 300), 0.5, t, log)
+    downs, ups = len(of(log, "mouse_down")), len(of(log, "mouse_up"))
+    assert ups == downs, (downs, ups)
+
+
 if __name__ == "__main__":
     failures = 0
     for name, fn in sorted(globals().items()):
