@@ -48,6 +48,7 @@ datas, binaries, hiddenimports = [], [], []
 d, b, h = collect_all("mediapipe")
 datas += d; binaries += b; hiddenimports += h
 datas += [("assets", "assets")]
+datas += [("VERSION", ".")]
 
 hiddenimports += [
     "hand_desktop_switcher",

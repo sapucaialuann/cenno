@@ -6,6 +6,7 @@ VERSION = open("VERSION", encoding="utf-8").read().strip()
 datas, binaries, hiddenimports = [], [], []
 d, b, h = collect_all("mediapipe")
 datas += d; binaries += b; hiddenimports += h
+datas += [("VERSION", ".")]
 hiddenimports += [
     "hand_desktop_switcher", "theme", "displays", "shortcuts", "recorder_mac", "headzone", "rumps",
     "Quartz", "AppKit", "Foundation", "ApplicationServices",
