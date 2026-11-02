@@ -356,8 +356,9 @@ def record(only=None):
     if not cap.isOpened():
         sys.exit("camera not available (is the terminal allowed to use the camera?)")
     win = "Cenno gesture check"
-    cv2.namedWindow(win, cv2.WINDOW_NORMAL)
-    cv2.resizeWindow(win, 1280, 560)
+    # Fixed size: a resizable window is scaled on every frame, which on a
+    # Retina screen took ~18 ms and halved the frame rate (30 -> 16 fps).
+    cv2.namedWindow(win, cv2.WINDOW_AUTOSIZE)
     try:
         cv2.setWindowProperty(win, cv2.WND_PROP_TOPMOST, 1)
     except cv2.error:
