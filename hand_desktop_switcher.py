@@ -251,8 +251,23 @@ PINCH_OFF = 0.50               # ... and to release (hysteresis)
 PINCH_RELEASE_FRAMES = 2       # frames in a row needed to release (press is
                                # instant so quick taps are never missed)
 PINCH_SMOOTH_ALPHA = 0.7       # EMA on the pinch distance (fingertips jitter)
-CLICK_MAX_SECONDS = 0.25       # pinch shorter than this = click, longer = drag
-DOUBLE_CLICK_SECONDS = 0.45
+PINCH_DRAG_OPEN = 0.08         # during a drag, the fingers opening this far
+                                # above the closed level freeze the cursor:
+                                # the hand shifts while letting go, and that
+                                # shift would drag the item away from where
+                                # the user aimed
+PINCH_DRAG_LEVEL_ALPHA = 0.2   # how fast the closed level of the drag
+                                # follows the pinch (it is averaged, so a
+                                # jittery frame does not move it)
+PINCH_DRAG_SLACK = 0.04        # how far the raw pinch may be above the
+                                # closed level and still count as closed
+                                # (it is what marks the spot the item is
+                                # dropped on)
+CLICK_MAX_SECONDS = 0.40       # pinch shorter than this = click, longer = drag
+                                # (a deliberate click plus the release lag
+                                # must fit in here, or it becomes a drag)
+DOUBLE_CLICK_SECONDS = 0.60    # two clicks: the window has to fit a slow
+                                # click (CLICK_MAX_SECONDS) plus its release
 DOUBLE_CLICK_MAX_DIST = 0.03   # fraction of the screen
 PINCH_LOOKBACK_SECONDS = 0.08  # click at where the cursor was just BEFORE
                                # the pinch (fingers drift while closing)
@@ -664,7 +679,16 @@ class GestureEngine:
         self.dragging = False
         self.pinch_start = 0.0
         self.freeze_pos = None
+        # A drag that is frozen: the fingers are opening, so the hand
+        # drifts, but the item must stay where it was.
+        self.drag_frozen = False
+        self.drag_anchor = None
+        # When the fingers started opening, and how close they were while
+        # they were closed: the drag is dropped on the spot from before.
+        self.drag_open_from = None
+        self.drag_pinch_low = None
         self.cursor_hist = deque()
+        self.pinch_hist = deque()       # (time, cursor spot, raw pinch)
         self.cursor_offset = (0.0, 0.0)
         self.cursor = None
         self.edge_votes = 0
@@ -699,7 +723,11 @@ class GestureEngine:
         self._ptt_end(ev)
         self._reset_hand()
         if self.paused:
-            return [e for e in ev if e[0] == "dictation_hold_end"]
+            # The mouse button has to be let go even while paused, or it
+            # stays down and the drag never ends.
+            return [e for e in ev
+                    if e[0] == "dictation_hold_end"
+                    or e[0] in ("mouse_up", "pointer_end")]
         return ev
 
     def _scroll_release(self, now, ev):
@@ -955,8 +983,11 @@ class GestureEngine:
                                        max(abs(x1 - x0), abs(y1 - y0)) / palm / (t1 - t0))
 
         if self.paused:
+            # The mouse button has to be let go even while paused, or it
+            # stays down and the drag never ends.
             ev = [e for e in ev
-                  if e[0].startswith("pause") or e[0] == "dictation_hold_end"]
+                  if e[0].startswith("pause") or e[0] == "dictation_hold_end"
+                  or e[0] in ("mouse_up", "pointer_end")]
         return ev
 
     # --- pointer ---
@@ -1095,6 +1126,15 @@ class GestureEngine:
         ax = self.fx(sum(p[0] for p in anchor) / 4, now)
         ay = self.fy(sum(p[1] for p in anchor) / 4, now)
         relative = self.pointer_mode == "relative"
+
+        # Pinch state: smoothed distance.  The smoothing comes first: the
+        # drag freeze has to know whether the fingers are opening before
+        # the cursor is moved.
+        raw_pinch = pinch
+        self.pinch_s = pinch if self.pinch_s is None else (
+            PINCH_SMOOTH_ALPHA * pinch + (1 - PINCH_SMOOTH_ALPHA) * self.pinch_s)
+        pinch = self.pinch_s
+
         if relative:
             # The cursor is moved by the movement of the hand, not by where
             # the hand is; the box says nothing about the screen then.
@@ -1106,10 +1146,6 @@ class GestureEngine:
         ox, oy = self.cursor_offset
         live = (mapped[0] + ox, mapped[1] + oy)
 
-        # Pinch state: smoothed distance, hysteresis, debounce.
-        self.pinch_s = pinch if self.pinch_s is None else (
-            PINCH_SMOOTH_ALPHA * pinch + (1 - PINCH_SMOOTH_ALPHA) * self.pinch_s)
-        pinch = self.pinch_s
         # A press needs a clearly straight index: closing the hand into a
         # fist also brings thumb and index together, and must not click.
         want = ((pinch <= PINCH_ON and index_ratio >= POINT_INDEX_MIN_RATIO)
@@ -1130,7 +1166,16 @@ class GestureEngine:
         elif flip and self.pinched:
             self.pinched = False
             if self.dragging:
-                ev.append(("mouse_up", self.cursor))
+                # The item is dropped where the cursor was when the
+                # fingers started opening.
+                at = (self.drag_anchor if self.drag_frozen
+                      and self.drag_anchor is not None else self.cursor)
+                if at is not None:
+                    ev.append(("mouse_up", at))
+                self.drag_frozen = False
+                self.drag_anchor = None
+                self.drag_open_from = None
+                self.drag_pinch_low = None
             else:
                 pos = self.freeze_pos
                 lx, ly = self.last_click_pos
@@ -1143,11 +1188,65 @@ class GestureEngine:
             self.dragging = False
         if self.pinched and not self.dragging and now - self.pinch_start >= CLICK_MAX_SECONDS:
             self.dragging = True
+            self.drag_anchor = self.freeze_pos
+            self.drag_open_from = None
+            self.drag_pinch_low = None
             ev.append(("mouse_down", self.freeze_pos))
             self._rebase_offset(mapped)
 
+        # Letting go of a drag: the fingers open and the hand shifts with
+        # them, and that shift would drag the item away from where it
+        # was.  So the cursor freezes as soon as the fingers start
+        # opening, and it only moves again if they close once more.
+        if self.dragging:
+            # How close the fingers are while they are closed: the level
+            # the pinch sits at when nothing is happening.  It is averaged
+            # over the frames where the fingers were still closed, so one
+            # jittery frame does not move it and the opening itself does
+            # not raise it.
+            if self.drag_pinch_low is None:
+                self.drag_pinch_low = raw_pinch
+            closed = raw_pinch <= self.drag_pinch_low + PINCH_DRAG_SLACK
+            # The fingers started opening.  The smoothed distance says so
+            # a frame or two later than the raw one, but it does not
+            # tremble, so it is the safer signal.
+            opening = pinch > self.drag_pinch_low + PINCH_DRAG_OPEN
+            if opening and self.drag_open_from is None:
+                self.drag_open_from = now
+            elif not opening and self.drag_open_from is not None:
+                # The fingers closed again before the release: the drag
+                # carries on from the frozen spot.
+                self.drag_open_from = None
+                self.drag_frozen = False
+                self.drag_anchor = None
+                if not relative:
+                    # Carry the frozen spot over, so nothing jumps.
+                    self._rebase_offset(mapped)
+            if self.drag_open_from is not None:
+                # The spot to drop the item on is where the cursor was
+                # while the fingers were still closed, so the drift of the
+                # hand letting go does not move the item.
+                spots = [p for t, p, q in self.pinch_hist
+                         if q <= self.drag_pinch_low + PINCH_DRAG_SLACK
+                         and t <= self.drag_open_from]
+                if spots:
+                    self.drag_anchor = spots[-1]
+                self.drag_frozen = True
+                if relative:
+                    # The hand drifted while the fingers opened; the cursor
+                    # must not follow it, so it stays on the frozen spot.
+                    self.rel_cursor = self.drag_anchor
+                    mapped = self.drag_anchor
+            elif closed:
+                # Still closed: the level follows the pinch.
+                self.drag_pinch_low = (PINCH_DRAG_LEVEL_ALPHA * raw_pinch
+                                       + (1 - PINCH_DRAG_LEVEL_ALPHA)
+                                       * self.drag_pinch_low)
+
         if self.pinched and not self.dragging:
             target = self.freeze_pos                 # hold still for the click
+        elif self.drag_frozen:
+            target = self.drag_anchor                # the fingers are opening
         elif relative:
             # The relative cursor is the truth, so there is no offset to
             # fade out here.
@@ -1159,9 +1258,15 @@ class GestureEngine:
             ox, oy = self.cursor_offset
             target = (min(1.0, max(0.0, mapped[0] + ox)), min(1.0, max(0.0, mapped[1] + oy)))
         self.cursor = target
+        if self.dragging and not self.drag_frozen:
+            # The anchor follows the cursor while the fingers stay closed.
+            self.drag_anchor = target
         self.cursor_hist.append((now, target))
+        self.pinch_hist.append((now, target, raw_pinch))
         while self.cursor_hist and self.cursor_hist[0][0] < now - 0.3:
             self.cursor_hist.popleft()
+        while self.pinch_hist and self.pinch_hist[0][0] < now - 0.3:
+            self.pinch_hist.popleft()
         ev.append(("pointer_move", target))
         self.debug["pointer"] = (target, self.pinched, self.dragging)
         self.pointer_live = True
@@ -1178,7 +1283,17 @@ class GestureEngine:
 
     def _pointer_end(self, ev):
         if self.pinched and self.dragging:
-            ev.append(("mouse_up", self.cursor))
+            # The gesture ends mid-drag (pause, pointer mode change, the
+            # hand leaves): let the button go at the spot the drag was
+            # frozen on, or at the cursor.
+            at = self.drag_anchor if (self.drag_frozen
+                                      and self.drag_anchor is not None) else self.cursor
+            if at is not None:
+                ev.append(("mouse_up", at))
+        self.drag_frozen = False
+        self.drag_anchor = None
+        self.drag_open_from = None
+        self.drag_pinch_low = None
         if self.pointer_mode == "relative" and self.cursor is not None:
             # The cursor keeps its place between pointing sessions, so the
             # next one starts from where this one stopped.
@@ -1421,7 +1536,12 @@ class Dispatcher:
         anyone can wave at a camera."""
         if not self.screen_locked(now):
             return events
-        return [("wake", 1)] if any(name == "lock" for name, _ in events) else []
+        # Letting the mouse button go has to get through even on the lock
+        # screen, or the button stays down when it unlocks.
+        out = [e for e in events if e[0] in ("mouse_up", "pointer_end")]
+        if any(name == "lock" for name, _ in events):
+            out.append(("wake", 1))
+        return out
 
     # --- screens ---
     def refresh_displays(self):
@@ -1880,6 +2000,21 @@ class PointerAnimator:
                     x, y = self.cursor_pos()
                     self.pos = (float(x), float(y))
             elif name == "pointer_end":
+                # The gesture ended with the button still down (paused, the
+                # mouse control was switched off, the pointer mode changed
+                # or the app is quitting).  Let the button go, or it stays
+                # stuck down and the next click becomes a double click.
+                # The release is queued, so it goes out after the press.
+                # Play the queue forward: a release already queued (the
+                # usual end of a drag) means there is nothing left to let go.
+                held = self.button_down
+                for a in self.actions:
+                    if a[0] in ("mouse_down", "mouse_up"):
+                        held = a[0] == "mouse_down"
+                if held:
+                    at = self.pos or self.target or self.cursor_position()
+                    if at is not None:
+                        self.actions.append(("mouse_up", at, 1))
                 self.target = None
                 self.target_n = None
                 self.pos = None
@@ -1907,6 +2042,11 @@ class PointerAnimator:
             with self.lock:
                 actions = list(self.actions)
                 self.actions.clear()
+                # The press is out of the queue and on its way, so the
+                # button counts as down from here on: a pointer_end that
+                # comes in now has to let it go again.
+                if any(a[0] == "mouse_down" for a in actions):
+                    self.button_down = True
                 tgt, pos = self.target, self.pos
                 if tgt is not None and pos is not None:
                     k = 1.0 - math.exp(-dt / CURSOR_SMOOTH_SECONDS)
