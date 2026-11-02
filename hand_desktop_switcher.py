@@ -295,10 +295,14 @@ HORNS_THUMB_MAX_SPAN = 0.85    # thumb tip to pinky tip below this = thumb tucke
 # Scratching your face or resting your chin on your hand looks like a swipe
 # to the gesture engine, so the face box is a "do not move here" zone.
 # The box is grown by this fraction of its width / height on each side.
-FACE_MARGIN = 0.25
+# 10% margin: tight enough so normal swipes and slaps beside the face work,
+# while still catching hand strokes near the face edges.
+FACE_MARGIN = 0.10
 # The hand counts as "at the face" when at least this share of its 21
-# landmarks is inside the grown box.
-FACE_HAND_SHARE = 0.30
+# landmarks is inside the grown box, OR when the palm centre is inside.
+FACE_HAND_SHARE = 0.60
+# Landmarks forming the palm centre (wrist + 4 metacarpals).
+FACE_PALM_INDICES = (0, 5, 9, 13, 17)
 # The face detector is slower than the hand tracker, so it runs every Nth
 # frame and the last box is reused in between.
 FACE_EVERY_N_FRAMES = 3
@@ -440,8 +444,9 @@ def near_face(pts, face):
     """True when the hand is at the user's face.
 
     `face` is the face box in pixels (x0, y0, x1, y1), or None.  The box is
-    grown by FACE_MARGIN on every side and the hand counts as "at the face"
-    when at least FACE_HAND_SHARE of its 21 landmarks is inside.
+    grown by FACE_MARGIN on every side.  The hand counts as "at the face"
+    when its palm centre (mean of landmarks 0, 5, 9, 13, 17) is inside the
+    grown box, or when at least FACE_HAND_SHARE of its 21 landmarks is inside.
     """
     if not face:
         return False
@@ -450,7 +455,11 @@ def near_face(pts, face):
     my = FACE_MARGIN * max(y1 - y0, 0.0)
     x0, y0, x1, y1 = x0 - mx, y0 - my, x1 + mx, y1 + my
     inside = sum(1 for x, y in pts if x0 <= x <= x1 and y0 <= y <= y1)
-    return inside >= FACE_HAND_SHARE * len(pts)
+    if inside >= FACE_HAND_SHARE * len(pts):
+        return True
+    palm_x = sum(pts[i][0] for i in FACE_PALM_INDICES) / len(FACE_PALM_INDICES)
+    palm_y = sum(pts[i][1] for i in FACE_PALM_INDICES) / len(FACE_PALM_INDICES)
+    return x0 <= palm_x <= x1 and y0 <= palm_y <= y1
 
 
 class OneEuro:
