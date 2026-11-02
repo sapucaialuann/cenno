@@ -1,4 +1,5 @@
-"""Rock horns: pause / resume, thumb positions, quick re-do.  Run:
+"""Rock horns: pause / resume, thumb positions, quick re-do, and the
+shaking hand that must not be taken for a wave.  Run:
 
     python tests/test_horns.py
 """
@@ -53,6 +54,66 @@ H = horns
 F = lambda: fist("up")  # noqa: E731
 
 
+# --- the shaking hand that must not lock the screen --------------------------
+
+# The palm the engine measures the wave against: the hand size, but never
+# more than MOTION_PALM_MAX_FRAC of the frame.
+WAVE_PALM = min(core.palm_size(open_hand()), core.MOTION_PALM_MAX_FRAC * 640)
+
+
+def shake(half_range_palms, cycles=4, secs=1.6):
+    """An open hand shaking side to side.  The hand travels
+    `half_range_palms` to each side of the middle, so it covers twice that
+    from left to right."""
+    step = half_range_palms * WAVE_PALM
+    n = round(secs * FPS)
+    out = []
+    for i in range(n):
+        # A triangle wave: the hand goes over and back, `cycles` times.
+        k = (i / n) * cycles
+        x = 320.0 + (step if int(k * 2) % 2 == 0 else -step) * (1 - abs((k % 1) - 0.5) * 2)
+        out.append(open_hand(cx=x))
+    return out
+
+
+def wave_events(frames):
+    """Feed the frames and return the lock events."""
+    eng = core.GestureEngine()
+    out = []
+    t = 0.0
+    for pts in frames:
+        out += [n for n, _ in eng.update(pts, 640, 480, t) if n == "lock"]
+        t += 1 / FPS
+    return out
+
+
+def test_shaking_does_not_lock():
+    # Forming the horns sign shakes the hand in a narrow band: the strokes
+    # are short and the hand stays in one place.  That must not be a wave.
+    assert wave_events(shake(0.4)) == []
+
+
+def test_a_real_wave_locks_once():
+    # A real wave covers much more ground: the strokes together span more
+    # than WAVE_MIN_SPAN_PALMS, and then it locks the screen once.
+    assert wave_events(shake(0.8)) == ["lock"]
+
+
+def test_a_narrow_shake_after_a_wave_does_not_lock():
+    # The wave is over once it has locked: the next shake starts from
+    # scratch and does not inherit the span of the wave.
+    eng = core.GestureEngine()
+    t = 0.0
+    for pts in shake(0.8):
+        eng.update(pts, 640, 480, t)
+        t += 1 / FPS
+    t += core.WAVE_COOLDOWN_SECONDS
+    for pts in shake(0.4):
+        locks = [n for n, _ in eng.update(pts, 640, 480, t) if n == "lock"]
+        assert not locks, locks
+        t += 1 / FPS
+
+
 def test_classify():
     for tip in ((338, 318), (318, 318), (305, 322)):
         assert pose_of(horns(thumb_tip=tip)) == "horns", tip
@@ -84,4 +145,7 @@ if __name__ == "__main__":
     test_quick_redo()
     test_flicker_keeps_latch()
     test_single_fire()
+    test_shaking_does_not_lock()
+    test_a_real_wave_locks_once()
+    test_a_narrow_shake_after_a_wave_does_not_lock()
     print("horns tests passed")

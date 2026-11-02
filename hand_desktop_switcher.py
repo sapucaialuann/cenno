@@ -334,6 +334,11 @@ GATHER_ATTEMPT_REPORT_AFTER = 0.5  # judge an attempt after the hand held this l
 WAVE_STROKE_PALMS = 0.35       # wave: each side-to-side stroke at least this far
 WAVE_MAX_STROKE_PALMS = 1.2    # wave: a stroke longer than this is a sweep
 WAVE_MIN_REVERSALS = 3         # direction changes needed (two full waves)
+WAVE_MIN_SPAN_PALMS = 1.2     # the strokes of a wave together must cover this
+                              # much side to side; forming horns shakes the
+                              # hand ~1.0 palm, recorded real waves cover 2+; raise it
+                              # to reject more shaking, lower it to accept
+                              # smaller waves
 WAVE_WINDOW_SECONDS = 1.5      # ...all within this long
 WAVE_COOLDOWN_SECONDS = 3.0    # one lock per wave
 PAUSE_HOLD_SECONDS = 1.0       # rock horns held this long pauses / resumes (0 = off)
@@ -620,6 +625,7 @@ class GestureEngine:
         self.last_open_time = -1e9
         self.last_launcher = -1e9
         self.last_lock = -1e9
+        self.pose = "none"               # _wave_reset reads it
         self._wave_reset()
         self.wave_seen = -1e9
         self.last_click_time = -1e9
@@ -693,13 +699,29 @@ class GestureEngine:
         self.wave_dir = 0
         self.wave_extreme = 0.0
         self.wave_flips = deque()
+        # The span (how wide the wave moves) is only dropped when the hand
+        # stops being an open / flat hand: a wave that is briefly
+        # interrupted (the hand touches the face) is still the same wave.
+        if self.pose not in ("open", "flat"):
+            self.wave_min_x = None       # leftmost point of the wave so far
+            self.wave_max_x = None       # rightmost point of the wave so far
 
     def _wave_step(self, x, now):
         """Open hand moving side to side. x is the centroid in palm units.
         wave_anchor is where the current stroke started, wave_extreme the
-        furthest point it has reached since."""
+        furthest point it has reached since.  wave_min_x / wave_max_x are
+        the extremes of the wave, so its side-to-side span can be checked:
+        forming the horns sign shakes the hand in a narrow band, a real
+        wave covers much more."""
         if now - self.last_lock < WAVE_COOLDOWN_SECONDS:
             return False
+        # The extremes of the wave, even on a stroke that turns out to be a
+        # sweep: a wave that covers a wide band is a wave, whatever the
+        # tracker makes of the individual strokes.
+        if self.wave_min_x is None or x < self.wave_min_x:
+            self.wave_min_x = x
+        if self.wave_max_x is None or x > self.wave_max_x:
+            self.wave_max_x = x
         if self.wave_anchor is None:
             self.wave_anchor = self.wave_extreme = x
             return False
@@ -730,9 +752,14 @@ class GestureEngine:
             self.wave_seen = now
         while self.wave_flips and now - self.wave_flips[0] > WAVE_WINDOW_SECONDS:
             self.wave_flips.popleft()
-        if len(self.wave_flips) >= WAVE_MIN_REVERSALS:
+        # The strokes must also cover a wide band: forming the rock-horns
+        # sign shakes the hand in a small range, and that is not a wave.
+        span = self.wave_max_x - self.wave_min_x
+        if (len(self.wave_flips) >= WAVE_MIN_REVERSALS
+                and span >= WAVE_MIN_SPAN_PALMS):
             self.last_lock = now
             self._wave_reset()
+            self.wave_min_x = self.wave_max_x = None   # the wave is over
             return True
         return False
 
