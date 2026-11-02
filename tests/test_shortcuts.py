@@ -149,6 +149,16 @@ def test_windows_recorder_key_state():
     assert k.key_down(0x1B)[0] == "keep"
 
 
+def test_mac_modifiers_carry_their_left_side_bit():
+    """Granola ignores a modifier without its side bit (#24)."""
+    cmd_mask, alt_mask = 0x100000, 0x80000          # Quartz's values
+    assert sc.mac_mod_flags("cmd", cmd_mask) == cmd_mask | 0x08
+    assert sc.mac_mod_flags("alt", alt_mask) == alt_mask | 0x20
+    assert sc.mac_mod_flags("ctrl", 0x40000) == 0x40000 | 0x01
+    assert sc.mac_mod_flags("shift", 0x20000) == 0x20000 | 0x02
+    assert set(sc.MAC_LEFT_SIDE_BITS) == set(sc.MAC_MODS)
+
+
 def test_tap_and_hold_refuse_invalid_shortcuts():
     assert sc.tap(None) is False
     assert sc.hold({"mods": [], "code": None}, True) is False
