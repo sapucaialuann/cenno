@@ -22,13 +22,14 @@ import rumps
 
 import hand_desktop_switcher as core
 from pointer_box import pointer_box_style
+import app_version
 import headzone
 import recorder_mac
 import shortcuts
 import theme
 
 APP_NAME = "Cenno"
-VERSION = "0.2.0"
+VERSION = app_version.read_version()
 SUPPORT_DIR = os.path.expanduser(f"~/Library/Application Support/{APP_NAME}")
 LOG_PATH = os.path.expanduser(f"~/Library/Logs/{APP_NAME}.log")
 SETTINGS_PATH = os.path.join(SUPPORT_DIR, "settings.json")

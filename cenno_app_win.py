@@ -35,13 +35,14 @@ except Exception:  # pragma: no cover - pywin32 may not be installed
 import displays as dpy
 import hand_desktop_switcher as core
 from pointer_box import pointer_box_style
+import app_version
 import headzone
 import recorder_win
 import shortcuts
 import theme
 
 APP_NAME = "Cenno"
-VERSION = "0.2.0"
+VERSION = app_version.read_version()
 SUPPORT_DIR = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), APP_NAME)
 LOG_PATH = os.path.join(SUPPORT_DIR, f"{APP_NAME}.log")
 SETTINGS_PATH = os.path.join(SUPPORT_DIR, "settings.json")
