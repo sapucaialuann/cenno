@@ -10,6 +10,7 @@ Nothing is sent to the system: no keys, no clicks.  Switch Cenno itself off
 while recording, or it will act on the gestures.
 
     .venv-build/bin/python tools/gesture_check.py record      # ~6 min, saves checks/<time>.json
+    python3 tools/gesture_check.py natural                    # natural recording mode (no coaching)
     python3 tools/gesture_check.py report [checks/<file>.json] # replay + report (latest by default)
 
 Each step waits until the gesture is recognised; the panel says why it is not.
@@ -98,6 +99,61 @@ STEPS = [
          prompt="NEGATIVE: the I-love-you sign (thumb, index, pinky out), hold still"),
     dict(id="fidget", seconds=12, expect={},
          prompt="NEGATIVE: just be natural - relax, gesture as if talking, move around"),
+]
+
+# Steps for natural recording mode: one entry per gesture, describing what the
+# gesture is for (not how to do it), with repetitions and timing.
+NATURAL_STEPS = [
+    dict(id="spotlight", reps=5, window=3.0, rest=1.5, expect={"launcher": 1},
+         prompt="Open Spotlight search, the way that feels natural to you"),
+    dict(id="spotlight_face", reps=5, window=3.0, rest=1.5, expect={"launcher": 1},
+         prompt="Open Spotlight in front of your face, the way that feels natural to you"),
+    dict(id="slap_right", reps=5, window=3.0, rest=1.5, expect={"space_left": 1},
+         prompt="Switch to the previous Space, the way that feels natural to you"),
+    dict(id="slap_left", reps=5, window=3.0, rest=1.5, expect={"space_right": 1},
+         prompt="Switch to the next Space, the way that feels natural to you"),
+    dict(id="swipe_up", reps=5, window=3.0, rest=1.5, expect={"overview": 1},
+         allow={"close_overview", "app_windows"},
+         prompt="Open Mission Control, the way that feels natural to you"),
+    dict(id="swipe_down", reps=5, window=3.0, rest=1.5, expect={"app_windows|close_overview": 1},
+         prompt="Close Mission Control or minimize, the way that feels natural to you"),
+    dict(id="scroll_down", reps=5, window=5.0, rest=1.5, expect={"scroll_down": 1},
+         prompt="Scroll down, the way that feels natural to you"),
+    dict(id="scroll_up", reps=5, window=5.0, rest=1.5, expect={"scroll_up": 1},
+         prompt="Scroll up, the way that feels natural to you"),
+    dict(id="back_forward", reps=5, window=4.0, rest=1.5, expect={"back|forward": 1},
+         allow={"scroll_down", "scroll_up"},
+         prompt="Navigate back or forward, the way that feels natural to you"),
+    dict(id="click", reps=5, window=2.5, rest=1.5, expect={"click": 1},
+         prompt="Click, the way that feels natural to you"),
+    dict(id="drag", reps=5, window=4.0, rest=1.5, expect={"mouse_down": 1, "mouse_up": 1},
+         prompt="Drag, the way that feels natural to you"),
+    dict(id="volume", reps=5, window=3.5, rest=1.5, expect={"volume_up|volume_down": 1},
+         prompt="Adjust the volume, the way that feels natural to you"),
+    dict(id="thumbs_up", reps=3, window=3.5, rest=1.5, expect={"play_pause": 1},
+         prompt="Play or pause media, the way that feels natural to you"),
+    dict(id="thumbs_down", reps=3, window=3.5, rest=1.5, expect={"undo": 1},
+         prompt="Undo, the way that feels natural to you"),
+    dict(id="thumb_left", reps=3, window=3.5, rest=1.5, expect={"arrow_left": 1},
+         prompt="Navigate left with the arrow key, the way that feels natural to you"),
+    dict(id="thumb_right", reps=3, window=3.5, rest=1.5, expect={"arrow_right": 1},
+         prompt="Navigate right with the arrow key, the way that feels natural to you"),
+    dict(id="shaka", reps=3, window=3.5, rest=1.5, expect={"dictation": 1},
+         prompt="Toggle dictation, the way that feels natural to you"),
+    dict(id="shaka_ear", reps=3, window=3.5, rest=1.5, expect={"dictation_hold_start": 1},
+         prompt="Push-to-talk dictation by your ear, the way that feels natural to you"),
+    dict(id="wave", reps=5, window=4.0, rest=1.5, expect={"lock": 1},
+         prompt="Lock the screen, the way that feels natural to you"),
+    dict(id="horns", reps=3, window=3.5, rest=1.5, expect={"pause_on|pause_off": 1},
+         prompt="Pause or resume Cenno, the way that feels natural to you"),
+    dict(id="scratch_face", reps=1, window=10.0, rest=1.5, expect={},
+         prompt="Scratch your face, rub your eyes, touch your hair"),
+    dict(id="chin_rest", reps=1, window=10.0, rest=1.5, expect={},
+         prompt="Rest your chin on your hand, shift around a little"),
+    dict(id="love_sign", reps=1, window=10.0, rest=1.5, expect={},
+         prompt="Make the I-love-you sign and hold it"),
+    dict(id="fidget", reps=1, window=10.0, rest=1.5, expect={},
+         prompt="Just be natural - relax, gesture as if talking, move around"),
 ]
 
 
@@ -493,10 +549,17 @@ def record(only=None):
             face = faces.update(rgb, w, h, now)
             lead = el < LEAD_SECONDS
             pts3 = pts = None
+            handed = None
             if res.multi_hand_landmarks:
                 hl = res.multi_hand_landmarks[0]
                 pts3 = [[p.x * w, p.y * h, p.z * w] for p in hl.landmark]
                 pts = [(p[0], p[1]) for p in pts3]
+                # The frame is mirrored with cv2.flip before MediaPipe, and MediaPipe's
+                # handedness assumes a mirrored selfie image, so the label then names
+                # the user's real hand.
+                if res.multi_handedness:
+                    cls_ = res.multi_handedness[0].classification[0]
+                    handed = [cls_.label, round(float(cls_.score), 2)]
                 ev = eng.update(pts, w, h, now, face=face)
                 draw.draw_landmarks(frame, hl, mp.solutions.hands.HAND_CONNECTIONS)
             else:
@@ -505,7 +568,8 @@ def record(only=None):
                 counts.update(action_names(ev))
             frames.append(dict(t=round(now - t0, 4), lead=lead, w=w, h=h,
                                pts=[[round(v, 1) for v in p] for p in pts3] if pts3 else None,
-                               face=[round(v, 1) for v in face] if face else None))
+                               face=[round(v, 1) for v in face] if face else None,
+                               handed=handed))
             if face:
                 cv2.rectangle(frame, (int(face[0]), int(face[1])), (int(face[2]), int(face[3])),
                               (120, 120, 120), 1)
@@ -572,6 +636,276 @@ def record(only=None):
     print(f"\nsaved {path}  ({len(rec['steps'])} steps)")
     return path
 
+
+# =============================================================================
+# Natural record
+# =============================================================================
+
+def record_natural(only=None, reps_override=None, hand_mode="both"):
+    """Record gestures naturally with repetitions, timed cues and no coaching."""
+    import cv2
+    import mediapipe as mp
+
+    if hand_mode not in ("right", "left", "both"):
+        raise ValueError("hand_mode must be right, left or both")
+    modes = user_modes()
+    hands = mp.solutions.hands.Hands(static_image_mode=False, max_num_hands=1,
+                                     model_complexity=core.MODEL_COMPLEXITY,
+                                     min_detection_confidence=0.6,
+                                     min_tracking_confidence=0.5)
+    faces = core.FaceTracker(mp.solutions.face_detection)
+    cap = cv2.VideoCapture(core.CAMERA_INDEX)
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, core.FRAME_WIDTH)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, core.FRAME_HEIGHT)
+    if not cap.isOpened():
+        sys.exit("camera not available (is the terminal allowed to use the camera?)")
+    win = "Cenno natural gesture check"
+    cv2.namedWindow(win, cv2.WINDOW_AUTOSIZE)
+    try:
+        cv2.setWindowProperty(win, cv2.WND_PROP_TOPMOST, 1)
+    except cv2.error:
+        pass
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    GREEN, RED, GREY, WHITE, AMBER = (90, 220, 90), (80, 80, 255), (190, 190, 190), (255, 255, 255), (0, 200, 255)
+
+    def text(img, s, x, y, scale=0.6, color=WHITE, thick=2):
+        cv2.putText(img, s, (x, y), font, scale, (0, 0, 0), thick + 2, cv2.LINE_AA)
+        cv2.putText(img, s, (x, y), font, scale, color, thick, cv2.LINE_AA)
+
+    def wrap(s, width=65):
+        words, lines, cur = s.split(), [], ""
+        for w_ in words:
+            if len(cur) + len(w_) + 1 > width:
+                lines.append(cur)
+                cur = w_
+            else:
+                cur = f"{cur} {w_}".strip()
+        return lines + [cur]
+
+    # Start screen: wait until Cenno is off and user presses SPACE
+    busy, busy_checked = True, 0.0
+    while True:
+        ok, frame = cap.read()
+        if not ok:
+            continue
+        now = time.monotonic()
+        if now - busy_checked > 1.0:
+            busy, busy_checked = cenno_tracking(), now
+        frame = cv2.flip(frame, 1)
+        h, w = frame.shape[:2]
+        cv2.rectangle(frame, (0, 0), (w, 160), (0, 0, 0), -1)
+        text(frame, "Cenno natural gesture check", 12, 30, 0.8, AMBER)
+        if busy:
+            text(frame, "1. Cenno is ON: switch it off in the menu bar", 12, 64, 0.6, RED)
+        else:
+            text(frame, "1. Cenno is off - good", 12, 64, 0.6, GREEN)
+        text(frame, "2. Record each gesture naturally - no coaching, no demos", 12, 92, 0.6)
+        text(frame, "3. Press SPACE to start   (q = quit)", 12, 120, 0.6,
+             GREY if busy else GREEN)
+        cv2.imshow(win, frame)
+        key = cv2.waitKey(1) & 0xFF
+        if key == ord(" ") and not busy:
+            break
+        if key == ord("q"):
+            cap.release()
+            cv2.destroyAllWindows()
+            sys.exit("cancelled")
+
+    hand_list = ["right", "left"] if hand_mode == "both" else [hand_mode]
+    base_steps = [s for s in NATURAL_STEPS if not only or s["id"] in only]
+    session_steps = []
+    for s in base_steps:
+        for h_choice in hand_list:
+            sc = dict(s)
+            sc["hand"] = h_choice
+            if reps_override and sc["expect"]:
+                sc["reps"] = reps_override
+            session_steps.append(sc)
+    # The base loop already gives RIGHT then LEFT for each gesture.
+
+    rec = dict(version=2, mode="natural", created=time.strftime("%Y-%m-%d %H:%M:%S"),
+               w=None, h=None, pointer_mode=modes[0], scroll_mode=modes[1],
+               steps=[])
+    quit_all = False
+    step_idx = 0
+    while step_idx < len(session_steps) and not quit_all:
+        step = session_steps[step_idx]
+        neg = not step["expect"]
+        target_hand = step["hand"]
+        total_reps = 1 if neg else step["reps"]
+        window_sec = step["window"]
+        rest_sec = step.get("rest", 1.5)
+
+        frames = []
+        eng = new_engine(modes)
+        t_step_start = time.monotonic()
+        phase = "lead"
+        phase_start = t_step_start
+        cur_rep = None
+        redo = skip = False
+        fps, last_frame_t = 30.0, None
+
+        while True:
+            ok, frame = cap.read()
+            if not ok:
+                continue
+            now = time.monotonic()
+            el = now - t_step_start
+            el_phase = now - phase_start
+
+            if last_frame_t is not None and now > last_frame_t:
+                fps = 0.9 * fps + 0.1 / (now - last_frame_t)
+            last_frame_t = now
+            if now - busy_checked > 2.0:
+                busy, busy_checked = cenno_tracking(), now
+
+            # Advance phases
+            if phase == "lead":
+                if el_phase >= LEAD_SECONDS:
+                    if neg:
+                        phase = "go"
+                        phase_start = now
+                        cur_rep = 0
+                    else:
+                        phase = "rest"
+                        phase_start = now
+                        cur_rep = 1
+            elif phase == "rest":
+                if el_phase >= rest_sec:
+                    phase = "go"
+                    phase_start = now
+            elif phase == "go":
+                if el_phase >= window_sec:
+                    if neg or cur_rep >= total_reps:
+                        break
+                    else:
+                        cur_rep += 1
+                        phase = "rest"
+                        phase_start = now
+
+            frame = cv2.flip(frame, 1)
+            h, w = frame.shape[:2]
+            rec["w"], rec["h"] = w, h
+
+            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            rgb.flags.writeable = False
+            res = hands.process(rgb)
+            face = faces.update(rgb, w, h, now)
+
+            pts3 = pts = None
+            handed = None
+            if res.multi_hand_landmarks:
+                hl = res.multi_hand_landmarks[0]
+                pts3 = [[p.x * w, p.y * h, p.z * w] for p in hl.landmark]
+                pts = [(p[0], p[1]) for p in pts3]
+                # The frame is mirrored with cv2.flip before MediaPipe, and MediaPipe's
+                # handedness assumes a mirrored selfie image, so the label then names
+                # the user's real hand.
+                if res.multi_handedness:
+                    cls_ = res.multi_handedness[0].classification[0]
+                    handed = [cls_.label, round(float(cls_.score), 2)]
+                ev = eng.update(pts, w, h, now, face=face)
+            else:
+                ev = eng.no_hand(now)
+
+            lead = (phase == "lead")
+            rep_tag = cur_rep if phase == "go" else None
+
+            frames.append(dict(t=round(now - t_step_start, 4), lead=lead, rep=rep_tag,
+                               w=w, h=h,
+                               pts=[[round(v, 1) for v in p] for p in pts3] if pts3 else None,
+                               face=[round(v, 1) for v in face] if face else None,
+                               handed=handed))
+
+            # Render camera overlay
+            # The intent only ("Switch to the previous Space"), never the internal
+            # id: "SLAP_RIGHT" would tell the user which way to move.
+            intent = step["prompt"].split(",")[0]
+            step_header = f"{step_idx + 1}/{len(session_steps)}  {intent}"
+            text(frame, step_header, 16, 32, 0.75, AMBER)
+            text(frame, f"{target_hand.upper()} HAND", 16, 62, 0.85, WHITE, 3)
+            for k, line in enumerate(wrap(step["prompt"], 70)[:2]):
+                text(frame, line, 16, 96 + 24 * k, 0.58, WHITE)
+
+            # Center cues
+            if phase == "lead":
+                text(frame, "GET READY", w // 2 - 120, h // 2 - 20, 1.3, AMBER, 3)
+                text(frame, f"{target_hand.upper()} HAND", w // 2 - 140, h // 2 + 35, 1.1, WHITE, 2)
+            elif phase == "rest":
+                text(frame, "REST", w // 2 - 60, h // 2 - 20, 1.3, GREY, 3)
+                text(frame, f"{target_hand.upper()} HAND", w // 2 - 140, h // 2 + 25, 1.0, WHITE, 2)
+            elif phase == "go":
+                if neg:
+                    text(frame, "GO  (0 / 1)", w // 2 - 130, h // 2 - 55, 1.4, GREEN, 3)
+                else:
+                    text(frame, f"GO  ({cur_rep} / {total_reps})", w // 2 - 130, h // 2 - 55, 1.4, GREEN, 3)
+                text(frame, f"{target_hand.upper()} HAND", w // 2 - 140, h // 2 - 5, 1.2, WHITE, 3)
+
+                # Shrinking progress bar
+                bar_frac = max(0.0, 1.0 - el_phase / window_sec)
+                bar_x0, bar_x1 = 50, w - 50
+                bar_y0, bar_y1 = h // 2 + 65, h // 2 + 77
+                cv2.rectangle(frame, (bar_x0, bar_y0), (bar_x1, bar_y1), (40, 40, 40), -1)
+                fill_w = int((bar_x1 - bar_x0) * bar_frac)
+                if fill_w > 0:
+                    cv2.rectangle(frame, (bar_x0, bar_y0), (bar_x0 + fill_w, bar_y1), GREEN, -1)
+
+            # Live fps & keys
+            slow = fps < 24
+            text(frame, f"{fps:4.0f} fps", w - 110, 32, 0.6, RED if slow else GREY, 1)
+            # Plain single-pass text on a dark strip: the outlined helper
+            # smears thin small text into an unreadable blob.
+            cv2.rectangle(frame, (0, h - 34), (w, h), (0, 0, 0), -1)
+            cv2.putText(frame, "r redo   s skip   q stop and save", (16, h - 12),
+                        font, 0.55, GREY, 1, cv2.LINE_AA)
+            if busy:
+                text(frame, "Cenno is ON: switch it off in the menu bar", 16, h - 42, 0.55, RED, 1)
+
+            cv2.imshow(win, frame)
+            key = cv2.waitKey(1) & 0xFF
+            if key == ord("s"):
+                skip = True
+                break
+            if key == ord("r"):
+                redo = True
+                break
+            if key == ord("q"):
+                quit_all = True
+                break
+
+        if redo:
+            continue
+
+        result = "skipped" if skip else ("stopped" if quit_all else "done")
+        step_entry = dict(
+            id=step["id"],
+            hand=step["hand"],
+            prompt=step["prompt"],
+            reps=step["reps"],
+            window=step["window"],
+            rest=step.get("rest", 1.5),
+            skipped=skip or quit_all,
+            result=result,
+            seconds=round(time.monotonic() - t_step_start - LEAD_SECONDS, 1),
+            frames=frames,
+        )
+        rec["steps"].append(step_entry)
+        print(f"{step['id']:15s} [{step['hand']} hand] {result:10s} {step_entry['seconds']:5.1f}s  ({len(frames)} frames)")
+        step_idx += 1
+
+    cap.release()
+    cv2.destroyAllWindows()
+    cv2.waitKey(1)
+    hands.close()
+    faces.close()
+
+    os.makedirs(CHECKS_DIR, exist_ok=True)
+    path = os.path.join(CHECKS_DIR, time.strftime("natural-%Y%m%d-%H%M%S.json"))
+    with open(path, "w") as f:
+        json.dump(rec, f)
+    print(f"\nsaved {path}  ({len(rec['steps'])} steps)")
+    return path
+
 # =============================================================================
 # Replay + report
 # =============================================================================
@@ -616,14 +950,132 @@ def pct(v, p):
     return v[min(len(v) - 1, int(p * len(v)))]
 
 
+def score_natural(rec):
+    """Score a natural recording per gesture and hand.
+
+    Returns a list of entries.  Each entry has hits, misses, wrong and
+    wrong_hand counts, plus the repetitions that made each mistake.
+    """
+    by_id = {s["id"]: s for s in NATURAL_STEPS}
+    results = []
+    for sr in rec.get("steps", []):
+        step = by_id.get(sr["id"], dict(expect={}, allow={}))
+        hand = sr.get("hand", "right")
+        expect = step.get("expect", {})
+        allow = set(step.get("allow", ()))
+        wanted = set()
+        for key in expect:
+            wanted.update(key.split("|"))
+
+        # A fresh engine per gesture, like replay_step, but events are kept
+        # with the repetition label that was active at the time.
+        eng = new_engine((rec.get("pointer_mode", core.POINTER_MODE),
+                          rec.get("scroll_mode", core.SCROLL_MODE)))
+        events = []
+        for fr in sr.get("frames", []):
+            t = fr["t"]
+            w, h = fr.get("w", rec.get("w")), fr.get("h", rec.get("h"))
+            if fr.get("pts"):
+                pts = [(p[0], p[1]) for p in fr["pts"]]
+                ev = eng.update(pts, w, h, t,
+                                face=tuple(fr["face"]) if fr.get("face") else None)
+            else:
+                ev = eng.no_hand(t)
+            events.append((fr.get("rep"), action_names(ev), fr.get("handed")))
+
+        reps = sorted({r for r, _, _ in events if r is not None})
+        result = dict(id=sr["id"], hand=hand, reps=len(reps), hits=0,
+                      misses=0, wrong=0, wrong_hand=0, missed=[], wrong_events=[],
+                      wrong_hand_reps=[], fired={})
+
+        # Map each event to the repetition it belongs to.  Events up to
+        # 0.5 s after a window end still count for that repetition.
+        rep_ends = {}
+        for fr in sr.get("frames", []):
+            if fr.get("rep") is not None:
+                rep_ends[fr["rep"]] = max(rep_ends.get(fr["rep"], 0.0), fr["t"])
+        by_rep = {rep: [] for rep in reps}
+        for fr, (r, ev, _) in zip(sr.get("frames", []), events):
+            if r in by_rep:
+                by_rep[r].extend(ev)
+                continue
+            # A rest/lead frame: it belongs to the previous repetition when
+            # it is within the 0.5 s grace period after that window.
+            for rep in reversed(reps):
+                if rep_ends.get(rep, -1e9) <= fr["t"] <= rep_ends.get(rep, -1e9) + 0.5:
+                    by_rep[rep].extend(ev)
+                    break
+
+        for rep in reps:
+            names = by_rep[rep]
+            counts = Counter(names)
+            if expect:
+                # A hit is the expected event firing at least once.
+                hit = any(sum(counts.get(n, 0) for n in key.split("|")) >= need
+                          for key, need in expect.items())
+                if hit:
+                    result["hits"] += 1
+                else:
+                    result["misses"] += 1
+                    result["missed"].append(rep)
+            stray = sorted(n for n in set(names)
+                           if n not in wanted and n not in allow)
+            if stray:
+                result["wrong"] += 1
+                result["wrong_events"].extend(stray)
+
+            labels = [h[0].lower() for r, _, h in events
+                      if r == rep and h]
+            # The majority label in the window decides which hand was seen.
+            if labels:
+                majority = Counter(labels).most_common(1)[0][0]
+                if majority != hand:
+                    result["wrong_hand"] += 1
+                    result["wrong_hand_reps"].append(rep)
+            result["fired"].update(Counter(names))
+        results.append(result)
+    return results
+
+
+def report_natural(rec, path=None):
+    if path is not None:
+        print(f"recording: {os.path.relpath(path, ROOT)}  ({rec['created']}, "
+              f"pointer={rec.get('pointer_mode')}, scroll={rec.get('scroll_mode')})\n")
+    scored = score_natural(rec)
+    total_hits = total_reps = total_wrong = total_wrong_hand = 0
+    for item in scored:
+        label = f"{item['id']} [{item['hand']} hand]"
+        if item["reps"]:
+            rate = f"{item['hits']}/{item['reps']} hit"
+            misses = f"   {item['misses']} missed" if item["misses"] else ""
+            wrong = (f"   {item['wrong']} wrong"
+                     + (f" ({', '.join(item['wrong_events'])})" if item["wrong_events"] else "")
+                     if item["wrong"] else "")
+            wrong_hand = (f"   {item['wrong_hand']} wrong hand seen"
+                          if item["wrong_hand"] else "")
+            print(f"{label:28s} {rate}{misses}{wrong}{wrong_hand}")
+        else:
+            print(f"{label:28s} no repetitions")
+        total_hits += item["hits"]
+        total_reps += item["reps"]
+        total_wrong += item["wrong"]
+        total_wrong_hand += item["wrong_hand"]
+    rate = f"{total_hits}/{total_reps} hit" if total_reps else "0/0 hit"
+    print(f"\nTOTAL {rate}   {total_wrong} wrong"
+          + (f"   {total_wrong_hand} wrong hand seen" if total_wrong_hand else ""))
+
+
 def report(path=None):
     if path is None:
-        found = sorted(glob.glob(os.path.join(CHECKS_DIR, "check-*.json")))
+        found = sorted(glob.glob(os.path.join(CHECKS_DIR, "check-*.json")) +
+                       glob.glob(os.path.join(CHECKS_DIR, "natural-*.json")))
         if not found:
             sys.exit("no recordings in checks/")
         path = found[-1]
     with open(path) as f:
         rec = json.load(f)
+    if rec.get("mode") == "natural":
+        return report_natural(rec, path)
     by_id = {s["id"]: s for s in STEPS}
     print(f"recording: {os.path.relpath(path, ROOT)}  ({rec['created']}, "
           f"pointer={rec.get('pointer_mode')}, scroll={rec.get('scroll_mode')})\n")
@@ -661,6 +1113,26 @@ if __name__ == "__main__":
             if unknown:
                 sys.exit(f"unknown steps: {sorted(unknown)}")
         p = record(only)
+        print()
+        report(p)
+    elif cmd == "natural":
+        only = None
+        if "--only" in sys.argv:
+            only = set(sys.argv[sys.argv.index("--only") + 1].split(","))
+            unknown = only - {s["id"] for s in NATURAL_STEPS}
+            if unknown:
+                sys.exit(f"unknown steps: {sorted(unknown)}")
+        reps = None
+        if "--reps" in sys.argv:
+            reps = int(sys.argv[sys.argv.index("--reps") + 1])
+            if reps < 1:
+                sys.exit("--reps must be at least 1")
+        hand = "both"
+        if "--hand" in sys.argv:
+            hand = sys.argv[sys.argv.index("--hand") + 1]
+            if hand not in ("right", "left", "both"):
+                sys.exit("--hand must be right, left or both")
+        p = record_natural(only, reps, hand)
         print()
         report(p)
     elif cmd == "report":
