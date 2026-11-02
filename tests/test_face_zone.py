@@ -228,11 +228,16 @@ def test_thumb_left_at_the_face_fires_arrow():
     assert names(log).count("arrow_left") == 1, log
 
 
-# --- 3. swipes at the face do nothing --------------------------------------
+# --- 3. swipes at the face -------------------------------------------------
+# A slow move inside the face box is still ignored (scratching your face
+# looks like a swipe), but a quick sweep is a slap going by and passes
+# through: on a laptop webcam the face is in the middle of the frame, so
+# every real slap crosses it.
 
-def test_sweep_at_the_face_does_not_switch_spaces():
+
+def test_slow_move_at_the_face_does_not_switch_spaces():
     eng, log = core.GestureEngine(), []
-    sweep(eng, log, open_hand, FACE_BOX)
+    sweep(eng, log, open_hand, FACE_BOX, seconds=1.2, dx=120.0)
     assert not [n for n in names(log) if n.startswith("space_")], log
     assert "lock" not in names(log), log
 
@@ -281,7 +286,7 @@ def test_wave_without_a_face_locks():
 
 def test_sweep_right_after_leaving_the_face_fires():
     eng, log = core.GestureEngine(), []
-    t = sweep(eng, log, open_hand, FACE_BOX)     # at the face: nothing
+    t = sweep(eng, log, open_hand, FACE_BOX, seconds=1.2, dx=120.0)  # slow: nothing
     assert not [n for n in names(log) if n.startswith("space_")], log
     sweep(eng, log, open_hand, None, t=t)        # same sweep, no face
     fired = [n for n in names(log) if n.startswith("space_")]

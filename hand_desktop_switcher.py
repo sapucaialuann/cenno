@@ -160,6 +160,32 @@ COOLDOWN_SECONDS = 0.75
 # fraction of the frame width, measured inside the swipe buffer.  It keeps a
 # small sideways wiggle from switching Spaces.
 SLAP_MIN_TRAVEL_FRAC = 0.22
+
+# --- Slaps (Space switching) ---
+# A slap often starts with the hand still partly outside the frame and
+# sweeps in from the edge in one stroke.  Such a hand is not warmed up yet,
+# but when it is already moving fast and sideways it is a slap going by,
+# so let it count as a swipe.
+ENTRY_SWEEP_SPEED_PALMS = 6.0
+# A quick sweep passes through the face box.  On a laptop webcam the face
+# is in the middle of the frame, so every real slap crosses it.  A hand
+# moving this fast is going by, not scratching the face, so the sweep is
+# let through.  Slow movement at the face stays blocked.
+FACE_PASS_SPEED_PALMS = 4.0
+# After a slap, the stroke that brings the hand back must not switch
+# Spaces the other way.  The block is refreshed when the hand settles,
+# because the stroke that brings it back comes after that.
+SLAP_RETURN_BLOCK_SECONDS = 1.2
+# When the hand comes into the face box it must already be sweeping at
+# this speed for its stroke to count.  Below it the hand is reaching for
+# the face and starts a new movement there.
+FACE_ENTER_SPEED_PALMS = 8.0
+# A hand that was waving this recently is waving, not slapping.
+WAVE_GONE_SECONDS = 0.8
+# Spotlight (gather right after an open hand) must not open while the
+# hand is still sweeping across the frame: bunching the fingers in the
+# middle of a slap is not a deliberate gesture.
+GATHER_MAX_SPEED_PALMS = 2.0
 # True: trackpad style, hand moving right goes to the previous Space (the
 # hand "pushes" the screen).  False: hand moving right goes to the next Space.
 NATURAL_SWIPE = True
@@ -594,6 +620,7 @@ class GestureEngine:
         self.last_launcher = -1e9
         self.last_lock = -1e9
         self._wave_reset()
+        self.wave_seen = -1e9
         self.last_click_time = -1e9
         self.last_click_pos = (0.0, 0.0)
         self.near_face = False
@@ -607,6 +634,12 @@ class GestureEngine:
         self.can_step_display = None
         self.ptt_active = False            # kept across hand resets: see _ptt_end
         self.ptt_since = 0.0
+        # The stroke that brings the hand back after a slap is ignored for a
+        # moment, so one slap switches Spaces once and not twice.  It lives
+        # here (not in _reset_hand) so it survives a flicker between "open"
+        # and "flat" and a short tracking dropout.
+        self.slap_block_dir = 0
+        self.slap_block_until = 0.0
         self._reset_hand()
 
     # --- state resets ---
@@ -619,6 +652,12 @@ class GestureEngine:
         self.armed = True
         self.still_since = None
         self.prev = None
+        self.raw_prev = None
+        self.speed = 0.0
+        self.step_speed = 0.0
+        self.side_speed = 0.0
+        self.hand_gap = False
+        self._was_at_face = False
         self.raw_pose = None
         self.raw_count = 0
         self.pose = "none"
@@ -687,6 +726,7 @@ class GestureEngine:
             self.wave_dir = -self.wave_dir
             self.wave_anchor = self.wave_extreme = x
             self.wave_flips.append(now)
+            self.wave_seen = now
         while self.wave_flips and now - self.wave_flips[0] > WAVE_WINDOW_SECONDS:
             self.wave_flips.popleft()
         if len(self.wave_flips) >= WAVE_MIN_REVERSALS:
@@ -835,7 +875,18 @@ class GestureEngine:
             PALM_EMA_ALPHA * raw_palm + (1 - PALM_EMA_ALPHA) * self.ema_palm)
         shape_palm = max(self.ema_palm, 1.0)
         palm = min(shape_palm, MOTION_PALM_MAX_FRAC * w)   # motion units
+        # The hand was not seen in the frame before this one: whatever it
+        # does now is a jump to wherever the tracker found it again.
+        self.hand_gap = self.lost_since is not None
         self.lost_since = None
+        # How fast the hand is moving right now, in palms per second.
+        raw_c = centroid(pts)
+        self.speed = 0.0
+        if self.raw_prev is not None and now > self.raw_prev[2]:
+            dt = now - self.raw_prev[2]
+            self.speed = math.hypot(raw_c[0] - self.raw_prev[0],
+                                    raw_c[1] - self.raw_prev[1]) / palm / dt
+        self.raw_prev = (raw_c[0], raw_c[1], now)
 
         # Hand at the face?  Motion gestures are ignored there (scratching
         # your face looks like a swipe), but hold poses still work.
@@ -854,6 +905,8 @@ class GestureEngine:
                 raw_pose = "point"
         self.debug = dict(feats, raw=raw_pose, palm=shape_palm, mpalm=palm,
                           face=self.near_face)
+        if not self.near_face:
+            self._was_at_face = False
 
         # Pose stability filter.
         if raw_pose == self.raw_pose:
@@ -885,19 +938,25 @@ class GestureEngine:
                     self.pose_since, self.latched = now, False
             self.buf.clear()
             self._reset_pose_state()
-            if (raw_pose == "gather"
-                    and now - self.last_open_time <= GATHER_FROM_OPEN_WINDOW
-                    and now - self.last_launcher > LAUNCHER_COOLDOWN_SECONDS):
-                ev.append(("launcher", 1))
-                self.last_launcher = now
-                self.latched = True
-                # The hand reopens and drifts after Spotlight shows up; keep
-                # that from firing a slap, swipe or wave (it would dismiss
-                # Spotlight) until the hand has settled.
-                self.buf.clear()
-                self.armed, self.still_since = False, None
-                self.last_fire = now
-                self._wave_reset()
+            # The hand must not be sweeping across the frame: bunching the
+            # fingers in the middle of a slap is not a deliberate gesture.
+            # The speed of the last step is used, because the fingers are
+            # bunched a moment after the sweep, when the hand has slowed
+            # down again.
+            if self.side_speed < GATHER_MAX_SPEED_PALMS:
+                if (raw_pose == "gather"
+                        and now - self.last_open_time <= GATHER_FROM_OPEN_WINDOW
+                        and now - self.last_launcher > LAUNCHER_COOLDOWN_SECONDS):
+                    ev.append(("launcher", 1))
+                    self.last_launcher = now
+                    self.latched = True
+                    # The hand reopens and drifts after Spotlight shows up;
+                    # keep that from firing a slap, swipe or wave (it would
+                    # dismiss Spotlight) until the hand has settled.
+                    self.buf.clear()
+                    self.armed, self.still_since = False, None
+                    self.last_fire = now
+                    self._wave_reset()
         if self.pose == "open":
             self.last_open_time = now
         self._gather_watch(feats, now)
@@ -958,7 +1017,6 @@ class GestureEngine:
                 self.ready_since = now
         else:
             self.ready_since = None
-            self.buf.clear()
         warmed = (self.ready_since is not None
                   and now - self.ready_since >= WARMUP_SECONDS)
 
@@ -977,6 +1035,26 @@ class GestureEngine:
             sdt = now - self.prev[2]
             step = ((cx - self.prev[0]) / palm, (cy - self.prev[1]) / palm, sdt)
         self.prev = (cx, cy, now)
+        # How fast the hand is moving, in palms per second, and how much of
+        # that is sideways.  A slap goes sideways, so the sideways part is
+        # what tells bunched-up fingers from a deliberate Spotlight gesture.
+        self.step_speed = (math.hypot(step[0], step[1]) / step[2]
+                           if (step is not None and step[2] > 0) else 0.0)
+        self.side_speed = (abs(step[0]) / step[2]
+                           if (step is not None and step[2] > 0) else 0.0)
+
+        # Entry sweep: the hand is not warmed up yet (it is still partly
+        # outside the frame) but it is already sweeping in fast and flat.
+        # That is a slap going by, so it counts as a swipe even though the
+        # warm-up has not finished.
+        entry_sweep = (not warmed
+                       and self.pose in ("open", "flat")
+                       and now - self.wave_seen > WAVE_GONE_SECONDS
+                       and self.side_speed >= ENTRY_SWEEP_SPEED_PALMS)
+        if outside > MAX_LANDMARKS_OUTSIDE and not entry_sweep:
+            # The hand is half out of frame: the swipe buffer is dropped so
+            # the entry motion is not carried into the next stroke.
+            self.buf.clear()
 
         # Re-arm once the hand settles.
         if not self.armed and step is not None:
@@ -986,8 +1064,17 @@ class GestureEngine:
                     self.still_since = now
                 elif now - self.still_since >= REARM_STILL_SECONDS:
                     self.armed, self.still_since = True, None
+                    # The hand settled, so the stroke that brings it back
+                    # comes after that: the block after the last slap starts
+                    # counting again from now.
+                    if self.slap_block_dir:
+                        self.slap_block_until = now + SLAP_RETURN_BLOCK_SECONDS
             else:
                 self.still_since = None
+
+        # The block after a slap runs out on its own.
+        if self.slap_block_dir and now >= self.slap_block_until:
+            self.slap_block_dir = 0
 
         # Volume knob.
         if self.pose == "ok":
@@ -1050,17 +1137,28 @@ class GestureEngine:
 
         # Swipes (open / flat hand: 4 directions; two fingers: horizontal nav).
         family = self.pose if self.pose in ("open", "flat", "two") else None
-        if self.near_face:
+        if self.near_face and not self._face_pass(step, now):
             # Motion made at the face must not carry over once the hand
             # leaves it, so the buffer is dropped every frame in there.
             family = None
             self.buf.clear()
+        elif self.near_face and not self._was_at_face:
+            # The hand just came into the face box.  A slap goes by at
+            # speed, so its stroke is kept; a hand that is reaching for
+            # the face starts its motion here, and the motion from before
+            # it does not belong to that stroke.
+            if step is None or abs(step[0]) / step[2] < FACE_ENTER_SPEED_PALMS:
+                self.buf.clear()
+        self._was_at_face = self.near_face
+        # A hand that is sweeping in from the edge counts as a swipe even
+        # though the warm-up has not finished.
+        swipe_ready = warmed or entry_sweep
         cutoff = now - SWIPE_BUFFER_SECONDS
-        if family and warmed:
+        if family and swipe_ready:
             self.buf.append((cx, cy, now))
         while self.buf and self.buf[0][2] < cutoff:
             self.buf.popleft()
-        if (family and warmed and len(self.buf) >= 2 and self.armed
+        if (family and swipe_ready and len(self.buf) >= 2 and self.armed
                 and now - self.last_fire > COOLDOWN_SECONDS):
             fired = self._eval_swipe(family, palm, now, w)
             if fired:
@@ -1487,6 +1585,29 @@ class GestureEngine:
             self.scroll_still_since = None
             self.scroll_hist.clear()
 
+
+    def _face_pass(self, step, now=0.0):
+        """True when a fast sideways sweep may pass through the face box.
+
+        On a laptop webcam the face sits in the middle of the frame, so
+        every real slap crosses it.  A hand moving this fast is going by,
+        not scratching the face, so the sweep is let through.  Slow
+        movement at the face stays blocked, exactly as before.
+        """
+        if step is None:
+            return False
+        if self.pose not in ("open", "flat"):
+            return False
+        if now - self.wave_seen <= WAVE_GONE_SECONDS:
+            # The hand is waving, not slapping.
+            return False
+        dx, dy, dt = step[0], step[1], step[2]
+        if dt <= 0:
+            return False
+        if abs(dx) < abs(dy):
+            return False                # reaching for the face, not a slap
+        return self.speed >= FACE_PASS_SPEED_PALMS
+
     def _eval_swipe(self, family, palm, now, w):
         (x0, y0, t0), (x1, y1, t1) = self.buf[0], self.buf[-1]
         dt = t1 - t0
@@ -1505,11 +1626,28 @@ class GestureEngine:
                     # A slap has to cross a good part of the frame, so a
                     # small sideways move never switches Space.
                     if abs(x1 - x0) < SLAP_MIN_TRAVEL_FRAC * w:
+                        # The hand swept sideways but not far enough to
+                        # switch Spaces.  The stroke that brings it back
+                        # must not switch Spaces the other way either.
+                        self.slap_block_dir = -1 if dx > 0 else 1
+                        self.slap_block_until = now + SLAP_RETURN_BLOCK_SECONDS
                         return None
                     moved_right = dx > 0
+                    # The stroke that brings the hand back after a slap
+                    # must not switch Spaces the other way.
+                    if (self.slap_block_dir and now < self.slap_block_until
+                            and moved_right == (self.slap_block_dir > 0)):
+                        return None
                     if NATURAL_SWIPE:
-                        return "space_left" if moved_right else "space_right"
-                    return "space_right" if moved_right else "space_left"
+                        fired = "space_left" if moved_right else "space_right"
+                    else:
+                        fired = "space_right" if moved_right else "space_left"
+                    # The hand comes back the other way next, so that
+                    # stroke is ignored for a moment: one slap switches
+                    # Spaces once and not twice.
+                    self.slap_block_dir = -1 if moved_right else 1
+                    self.slap_block_until = now + SLAP_RETURN_BLOCK_SECONDS
+                    return fired
                 # Like a trackpad: fingers moving right = back.
                 return "back" if dx > 0 else "forward"
         elif family in ("open", "flat"):
