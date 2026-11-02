@@ -236,6 +236,10 @@ DRAG_SMOOTH_SECONDS = 0.07     # spreads each camera frame's motion over time
 RETURN_BLOCK_SECONDS = 0.8
 SCROLL_TICK_HZ = 120
 LINE_PX = 40                   # pixels per scroll line (non-macOS fallback)
+# Windows measures the wheel in 1/120 of a notch.  One notch scrolls about
+# 100 px in a browser (3 lines); raise WIN_PX_PER_NOTCH to scroll slower.
+WHEEL_DELTA = 120
+WIN_PX_PER_NOTCH = 100
 
 # --- Mouse pointer (point with the index finger, pinch to click) ---
 # The cursor follows the four KNUCKLES: they do not move when you pinch,
@@ -1795,6 +1799,13 @@ def _windows_input_desktop_locked():
         user32.CloseDesktop(desk)
 
 
+def _windows_wheel(delta):
+    """Turn the mouse wheel by `delta` 1/120 notches (+ = up)."""
+    import ctypes
+    MOUSEEVENTF_WHEEL = 0x0800
+    ctypes.windll.user32.mouse_event(MOUSEEVENTF_WHEEL, 0, 0, delta, 0)
+
+
 class Dispatcher:
     def __init__(self):
         import pyautogui
@@ -2445,6 +2456,7 @@ class ScrollAnimator:
         self.velocity = 0.0
         self.frac = 0.0
         self.line_acc = 0.0
+        self.wheel_acc = 0.0
         threading.Thread(target=self._run, daemon=True).start()
 
     def drag(self, px):
@@ -2498,6 +2510,14 @@ class ScrollAnimator:
             e = Q.CGEventCreateScrollWheelEvent(None, Q.kCGScrollEventUnitPixel, 1, px)
             Q.CGEventSetIntegerValueField(e, Q.kCGScrollWheelEventIsContinuous, 1)
             Q.CGEventPost(Q.kCGHIDEventTap, e)
+        elif OS_NAME == "Windows":
+            # pyautogui.scroll sends its number as the raw wheel delta, so
+            # one "line" was 1/120 of a notch (#27).  Send the delta here.
+            self.wheel_acc += px * WHEEL_DELTA / WIN_PX_PER_NOTCH
+            delta = int(self.wheel_acc)
+            if delta:
+                self.wheel_acc -= delta
+                _windows_wheel(delta)
         else:
             # No pixel scrolling available: fall back to whole lines.
             self.line_acc += px / LINE_PX
