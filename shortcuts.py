@@ -44,6 +44,10 @@ MAC_MODS = {
     "ctrl": (59, "kCGEventFlagMaskControl"),
     "fn": (63, "kCGEventFlagMaskSecondaryFn"),
 }
+# The side bit a real (left) modifier key carries, IOKit's NX_DEVICEL*KEYMASK.
+# Apps that tell left from right modifiers (Granola) ignore a key without it
+# (#24).  fn has no side.
+MAC_LEFT_SIDE_BITS = {"cmd": 0x08, "shift": 0x02, "alt": 0x20, "ctrl": 0x01, "fn": 0x00}
 MAC_ALIASES = {"command": "cmd", "option": "alt", "opt": "alt", "control": "ctrl"}
 MAC_SYMBOLS = (("ctrl", "⌃"), ("alt", "⌥"), ("shift", "⇧"),
                ("cmd", "⌘"))
@@ -324,34 +328,41 @@ def _mac_send(sc, down):
     import Quartz as Q
     if any(m not in MAC_MODS for m in sc["mods"]):
         return False
-    mods = [MAC_MODS[m] for m in sc["mods"]]
+    mods = [(MAC_MODS[m][0], mac_mod_flags(m, getattr(Q, MAC_MODS[m][1])))
+            for m in sc["mods"]]
     src = Q.CGEventSourceCreate(Q.kCGEventSourceStateHIDSystemState)
 
     def post(code, key_down, flags, flags_event=False):
         e = Q.CGEventCreateKeyboardEvent(src, code, key_down)
         if flags_event:
             Q.CGEventSetType(e, Q.kCGEventFlagsChanged)
-        Q.CGEventSetFlags(e, flags)
+        # A real key event is always marked non-coalesced.
+        Q.CGEventSetFlags(e, flags | Q.kCGEventFlagMaskNonCoalesced)
         Q.CGEventPost(Q.kCGHIDEventTap, e)
         time.sleep(KEY_GAP)
 
     if down:
         flags = 0
-        for code, mask in mods:                     # modifiers down
-            flags |= getattr(Q, mask)
+        for code, bits in mods:                     # modifiers down
+            flags |= bits
             post(code, True, flags, True)
         if sc["code"] is not None:
             post(sc["code"], True, flags)
     else:
         flags = 0
-        for _, mask in mods:
-            flags |= getattr(Q, mask)
+        for _, bits in mods:
+            flags |= bits
         if sc["code"] is not None:
             post(sc["code"], False, flags)
-        for code, mask in reversed(mods):           # modifiers up
-            flags &= ~getattr(Q, mask)
+        for code, bits in reversed(mods):           # modifiers up
+            flags &= ~bits
             post(code, False, flags, True)
     return True
+
+
+def mac_mod_flags(mod, mask):
+    """The flags a held left modifier sets: its mask plus its side bit."""
+    return mask | MAC_LEFT_SIDE_BITS[mod]
 
 
 _win_types = None
