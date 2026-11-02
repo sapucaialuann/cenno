@@ -334,7 +334,7 @@ class Coach:
 # Record
 # =============================================================================
 
-def record():
+def record(only=None):
     import cv2
     import mediapipe as mp
     import numpy as np
@@ -389,7 +389,7 @@ def record():
         neg = not step["expect"]
         tag = {"lead": ("GET READY", AMBER), "go": ("YOUR TURN", GREEN),
                "done": ("DONE", GREEN), "neg": ("DON'T TRIGGER ANYTHING", AMBER)}[phase]
-        text(canvas, f"{step_i + 1}/{len(STEPS)}  {tag[0]}", 12, 28, 0.75, tag[1])
+        text(canvas, f"{step_i + 1}/{len(steps)}  {tag[0]}", 12, 28, 0.75, tag[1])
         for k, line in enumerate(wrap(step["prompt"], 100)[:2]):
             text(canvas, line, 12, 56 + 22 * k, 0.58)
         # right panel: demo, then why-not lines
@@ -458,10 +458,11 @@ def record():
     rec = dict(version=2, created=time.strftime("%Y-%m-%d %H:%M:%S"),
                w=None, h=None, pointer_mode=modes[0], scroll_mode=modes[1],
                steps=[])
+    steps = [s for s in STEPS if not only or s["id"] in only]
     quit_all = False
     i = 0
-    while i < len(STEPS) and not quit_all:
-        step = STEPS[i]
+    while i < len(steps) and not quit_all:
+        step = steps[i]
         neg = not step["expect"]
         frames, counts = [], Counter()
         eng = new_engine(modes)
@@ -651,7 +652,14 @@ def report(path=None):
 if __name__ == "__main__":
     cmd = sys.argv[1] if len(sys.argv) > 1 else "report"
     if cmd == "record":
-        p = record()
+        # record --only slap_right,slap_left  : just those steps
+        only = None
+        if "--only" in sys.argv:
+            only = set(sys.argv[sys.argv.index("--only") + 1].split(","))
+            unknown = only - {s["id"] for s in STEPS}
+            if unknown:
+                sys.exit(f"unknown steps: {sorted(unknown)}")
+        p = record(only)
         print()
         report(p)
     elif cmd == "report":
