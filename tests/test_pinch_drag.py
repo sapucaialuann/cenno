@@ -438,10 +438,10 @@ def test_a_steady_wide_gap_never_presses():
 
 
 def test_drag_cut_by_the_face_zone_releases_once():
-    """A drag whose hand passes through the face zone is dropped there,
-    once.  The pinch state used to survive the drop, so every exit from or
-    entry to the face zone sent another release (30 releases for 13
-    presses in a recorded session)."""
+    """A drag whose hand passes through the face zone sends exactly one
+    release per press.  It used to send a release on every exit from or
+    entry to the face zone (30 releases for 13 presses in a recorded
+    session); since #9 the drag simply carries on through the face."""
     eng, log = engine(), []
     t = run(eng, make_point(200, 300), 0.5, 0.0, log)
     t = run(eng, pinch_point(200, 300, 0.10), 0.7, t, log)
