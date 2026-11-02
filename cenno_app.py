@@ -56,7 +56,8 @@ DISPLAY_MODES = (("current", "Current display"),
                  ("all", "All displays"))
 POINTER_MODES = (("relative", "Trackpad: cursor follows your hand's movement"),
                  ("absolute", "Aim: hand position is screen position"))
-SCROLL_MODES = (("joystick", "Gas pedal: hold below or above to scroll"),
+SCROLL_MODES = (("tilt", "Tilt: point the two fingers up or down"),
+                ("joystick", "Gas pedal: hold below or above to scroll"),
                 ("drag", "Drag the page, flick to glide"))
 PREVIEW_W, PREVIEW_H = 280, 210        # floating corner preview (points)
 PREVIEW_SIZES = (("small", "Small", (200, 150)),

@@ -14,6 +14,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import hand_desktop_switcher as core            # noqa: E402
 
+core.SCROLL_MODE = "joystick"     # the default is tilt; every engine here is a gas pedal
+
 FPS = 30.0
 W, H = 640, 480
 

@@ -89,6 +89,7 @@ POINTER_MODES = (
     ("absolute", "Aim: hand position is screen position"),
 )
 SCROLL_MODES = (
+    ("tilt",     "Tilt: point the two fingers up or down"),
     ("joystick", "Gas pedal: hold below or above to scroll"),
     ("drag",     "Drag the page, flick to glide"),
 )
@@ -187,7 +188,7 @@ def load_settings():
         s["display_mode"] = DEFAULT_SETTINGS["display_mode"]
     if s.get("pointer_mode") not in ("relative", "absolute"):
         s["pointer_mode"] = DEFAULT_SETTINGS["pointer_mode"]
-    if s.get("scroll_mode") not in ("joystick", "drag"):
+    if s.get("scroll_mode") not in [key for key, _ in SCROLL_MODES]:
         s["scroll_mode"] = DEFAULT_SETTINGS["scroll_mode"]
     if raw and migrated != raw:
         save_settings(s)
