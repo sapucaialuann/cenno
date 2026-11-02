@@ -53,7 +53,7 @@ gets tried in real use: the user's experience there beats any score.
   - area: `area: spaces`, `area: pointer`, `area: spotlight`, `area: scroll`, `area: dictation`, `area: gestures` (other poses), `area: app` (menu, preview, settings, permissions), `area: tools`
   - os, one or both: `os: macos`, `os: windows`. Both labels = affects both systems, so filtering by one OS shows everything that affects it. Shared code (the gesture engine, both apps) gets both, even if it was only seen on one; say in the issue where it was observed.
   - priority, exactly one: `P0: critical` (unusable or harmful: drop everything), `P1: high` (a main gesture unreliable in daily use: next up), `P2: medium` (noticeable, or needed for the next release), `P3: low` (minor, rarely used, or watch only). The developer has the final say; work on the highest priority first.
-- Put it in a milestone when it belongs to a release or project (`0.3.0`, `Pointer project`).
+- Put it in the **release milestone** it ships in. One theme per release: `0.3.0` ship what is on `dev`, `0.4.0` pointer, `0.5.0` other gestures. New issues go into the release they fit, or stay without a milestone until the developer schedules them. Releases are worked on in order; within a release, by priority.
 - The issue says what is wrong or wanted, the evidence (measurements, recording, log lines), and what "done" means.
 - Branches and commits name the issue (`fix/10-ghost-drag`, `Fixes #10` in the commit or PR). Close it with the measured result.
 
