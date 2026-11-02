@@ -1113,13 +1113,9 @@ class GestureEngine:
             self.debug["knob"] = (self.knob_angle - self.knob_ref) * VOLUME_DIRECTION
 
         # Mouse pointer.
-        if self.pose == "point" and not self.near_face:
+        if self.pose == "point":
             self._pointer_step(pts, w, h, now, feats["pinch"],
                                feats["ratios"]["index"], ev)
-        elif self.near_face and self.pointer_live:
-            # The hand went to the face: end the pointer cleanly, so no
-            # cursor is left running behind the user's face.
-            self._pointer_end(ev)
 
         # Two-finger scroll: drag follows the hand, flicks glide.
         if self.pose == "two" and warmed and step is not None and not self.near_face:
