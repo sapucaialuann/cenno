@@ -55,14 +55,25 @@ gets tried in real use: the user's experience there beats any score.
   - priority, exactly one: `P0: critical` (unusable or harmful: drop everything), `P1: high` (a main gesture unreliable in daily use: next up), `P2: medium` (noticeable, or needed for the next release), `P3: low` (minor, rarely used, or watch only). The developer has the final say; work on the highest priority first.
 - Put it in the **release milestone** it ships in. One theme per release: `0.3.0` ship what is on `dev`, `0.4.0` pointer, `0.5.0` other gestures. New issues go into the release they fit, or stay without a milestone until the developer schedules them. Releases are worked on in order; within a release, by priority.
 - The issue says what is wrong or wanted, the evidence (measurements, recording, log lines), and what "done" means.
-- Branches and commits name the issue (`fix/10-ghost-drag`, `Fixes #10` in the commit or PR). Close it with the measured result.
+- Branches name the issue (`fix/10-ghost-drag`, `feat/16-stay-awake`).
+
+## Every issue is finished by a pull request
+
+No issue is closed without a PR, and no code reaches `dev` without one (small fixes included).
+
+1. **Todo**: the issue exists, nobody works on it.
+2. **Doing**: a branch from `dev` exists for it (pushed), and the issue is assigned or commented "working on it".
+3. **Ready to merge**: a PR into `dev` is open, its description says `Fixes #N` and the measured result, `python3 tests/run_all.py` passes, and the review routine is done (code review, then simplify on new code only).
+4. **Done**: the PR is merged into `dev` and the issue is closed.
+
+The project board ("Cenno") shows these four columns; move the card when the state changes. One PR per issue; a PR that needs several issues lists them all (`Fixes #9, fixes #10`).
 
 ## Branches, issues, releases
 
 - `main` = released. Releases come from tags: pushing `vX.Y.Z` runs `.github/workflows/release.yml`, which builds the .dmg, the Windows installer and the file the website serves.
 - `dev` = integration branch, pushed to GitHub. All work lands here; it should stay usable.
-- Work branches are short-lived and branch from `dev`. Merge them into `dev` once reviewed and tested, then delete them. Push anything that lives longer than a working session; nothing should exist only on one machine.
-- Bigger projects (the pointer: issue #7) get their own pushed branch, merged into `dev` by pull request.
+- Work branches are short-lived and branch from `dev`. They reach `dev` only through a PR (see above), then get deleted. Push anything that lives longer than a working session; nothing should exist only on one machine.
+- Bigger projects (the pointer: issue #7) get their own pushed branch; their issues get PRs into that branch, and the branch reaches `dev` by one final PR.
 - The Windows app shares the engine. A change to the engine or to `cenno_app.py` usually needs the same change in `cenno_app_win.py`, and Windows builds must be tested on Windows before a release (#4).
 
 ## Code style
