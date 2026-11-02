@@ -34,6 +34,7 @@ except Exception:  # pragma: no cover - pywin32 may not be installed
 
 import displays as dpy
 import hand_desktop_switcher as core
+from pointer_box import pointer_box_style
 import headzone
 import recorder_win
 import shortcuts
@@ -522,12 +523,13 @@ class Tracker(threading.Thread):
             if self.engine.ptt_active and face is not None:
                 cv2.rectangle(frame, (int(face[0]), int(face[1])),
                               (int(face[2]), int(face[3])), col("trace"), 2)
-            if (self.engine.pose == "point" and self.settings["mouse"]
-                    and self.engine.pointer_mode == "absolute"):
+            style = pointer_box_style(self.engine.pose, self.settings["mouse"],
+                                      self.engine.pointer_mode, self.engine.pinched)
+            if style is not None:
+                thick, color_name = style
                 x0, y0, x1, y1 = core.POINTER_BOX
-                box = col("ember") if self.engine.pinched else col("trace")
                 cv2.rectangle(frame, (int(x0 * w), int(y0 * h)),
-                              (int(x1 * w), int(y1 * h)), box, 2)
+                              (int(x1 * w), int(y1 * h)), col(color_name), thick)
         # Render at 2x the panel size so it stays sharp on scaled screens.
         small = cv2.resize(frame, (PREVIEW_W * 2, PREVIEW_H * 2),
                            interpolation=cv2.INTER_AREA)
