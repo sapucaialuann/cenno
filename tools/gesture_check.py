@@ -110,6 +110,22 @@ def user_modes():
         return core.POINTER_MODE, core.SCROLL_MODE
 
 
+def cenno_tracking():
+    """True while the Cenno app runs with gestures switched on.  It would
+    share the camera and the CPU (halving the frame rate of both) and act
+    on the gestures being checked."""
+    import subprocess
+    try:
+        with open(SETTINGS_PATH) as f:
+            if not json.load(f).get("enabled", True):
+                return False
+    except Exception:
+        pass
+    found = subprocess.run(["pgrep", "-f", "Cenno.app/Contents/MacOS/Cenno"],
+                           capture_output=True)
+    return found.returncode == 0
+
+
 def new_engine(modes):
     eng = core.GestureEngine()
     eng.pointer_mode, eng.scroll_mode = modes
@@ -411,21 +427,28 @@ def record():
              canvas.shape[0] - 10, 0.5, GREY, 1)
         return canvas
 
-    # Start screen: wait until the user is ready (and Cenno is off).
+    # Start screen: wait until the user is ready and Cenno is off.
+    busy, busy_checked = True, 0.0
     while True:
         ok, frame = cap.read()
         if not ok:
             continue
+        if time.monotonic() - busy_checked > 1.0:
+            busy, busy_checked = cenno_tracking(), time.monotonic()
         frame = cv2.flip(frame, 1)
         h, w = frame.shape[:2]
         cv2.rectangle(frame, (0, 0), (w, 150), (0, 0, 0), -1)
         text(frame, "Cenno gesture check", 12, 30, 0.8, AMBER)
-        text(frame, "1. Switch Cenno OFF in the menu bar first", 12, 64, 0.6)
+        if busy:
+            text(frame, "1. Cenno is ON: switch it off in the menu bar", 12, 64, 0.6, RED)
+        else:
+            text(frame, "1. Cenno is off - good", 12, 64, 0.6, GREEN)
         text(frame, "2. Each step waits until you do the gesture", 12, 92, 0.6)
-        text(frame, "3. Press SPACE to start   (q = quit)", 12, 120, 0.6, GREEN)
+        text(frame, "3. Press SPACE to start   (q = quit)", 12, 120, 0.6,
+             GREY if busy else GREEN)
         cv2.imshow(win, frame)
         key = cv2.waitKey(1) & 0xFF
-        if key == ord(" "):
+        if key == ord(" ") and not busy:
             break
         if key == ord("q"):
             cap.release()
@@ -447,12 +470,18 @@ def record():
         t0 = time.monotonic()
         done_at = None
         redo = skip = False
+        fps, last_frame_t = 30.0, None
         while True:
             ok, frame = cap.read()
             if not ok:
                 continue
             now = time.monotonic()
             el = now - t0
+            if last_frame_t is not None and now > last_frame_t:
+                fps = 0.9 * fps + 0.1 / (now - last_frame_t)
+            last_frame_t = now
+            if now - busy_checked > 2.0:
+                busy, busy_checked = cenno_tracking(), now
             frame = cv2.flip(frame, 1)
             h, w = frame.shape[:2]
             rec["w"], rec["h"] = w, h
@@ -496,6 +525,13 @@ def record():
                 phase = "go"
             canvas = compose(frame, i, step, phase, last_lines, counts, missing, stray,
                              now, max(0.0, el - LEAD_SECONDS))
+            slow = fps < 24
+            text(canvas, f"{fps:4.0f} fps", canvas.shape[1] - 110, 28, 0.6,
+                 RED if slow else GREY, 1)
+            if busy or slow:
+                warn = ("Cenno is ON: it shares the camera and acts on your gestures"
+                        if busy else "camera is slow: close other camera apps")
+                text(canvas, warn, 12, canvas.shape[0] - 34, 0.55, RED, 1)
             cv2.imshow(win, canvas)
             key = cv2.waitKey(1) & 0xFF
             if key == ord("s"):
