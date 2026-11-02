@@ -45,19 +45,35 @@ A gesture change is accepted when it raises the natural hit rate for the gesture
 it targets and does not make any recorded step that passed before fail. Then it
 gets tried in real use: the user's experience there beats any score.
 
+## Every piece of work starts from a GitHub issue
+
+- A new request, a bug found along the way, or an idea becomes an issue *before* work starts. Search the open issues first; extend an existing one instead of duplicating it.
+- Each issue gets exactly one **type**, at least one **area**, and an **OS** label only if it affects one system:
+  - type: `type: bug` (does not work as intended), `type: feature` (something new), `type: improvement` (make what exists work better, incl. tuning), `type: chore` (build, release, docs, tools, process)
+  - area: `area: spaces`, `area: pointer`, `area: spotlight`, `area: scroll`, `area: dictation`, `area: gestures` (other poses), `area: app` (menu, preview, settings, permissions), `area: tools`
+  - os: `os: macos`, `os: windows` (no OS label = both)
+- Put it in a milestone when it belongs to a release or project (`0.3.0`, `Pointer project`).
+- The issue says what is wrong or wanted, the evidence (measurements, recording, log lines), and what "done" means.
+- Branches and commits name the issue (`fix/10-ghost-drag`, `Fixes #10` in the commit or PR). Close it with the measured result.
+
 ## Branches, issues, releases
 
 - `main` = released. Releases come from tags: pushing `vX.Y.Z` runs `.github/workflows/release.yml`, which builds the .dmg, the Windows installer and the file the website serves.
 - `dev` = integration branch, pushed to GitHub. All work lands here; it should stay usable.
 - Work branches are short-lived and branch from `dev`. Merge them into `dev` once reviewed and tested, then delete them. Push anything that lives longer than a working session; nothing should exist only on one machine.
 - Bigger projects (the pointer: issue #7) get their own pushed branch, merged into `dev` by pull request.
-- Every problem is a GitHub issue, labelled by area (`spaces`, `pointer`, `spotlight`, `dictation`, `gestures`, `windows`, `release`, `tuning`) and placed in a milestone (`0.3.0`, `Pointer project`). Reference the issue in commits and close it when fixed, with the measured result.
 - The Windows app shares the engine. A change to the engine or to `cenno_app.py` usually needs the same change in `cenno_app_win.py`, and Windows builds must be tested on Windows before a release (#4).
 
 ## Code style
 
-- Comments explain *why*, in short plain English. Constants carry a comment with their unit and what raising or lowering them does.
+These rules apply to all **new** code. Existing code does not have to be rewritten.
+
+- **KISS.** The simplest thing that works. No abstraction, option or layer until a second real use needs it. Small functions that do one thing, with names that say what.
+- **Best practices.** Clear names, no duplication, early returns over deep nesting, no magic numbers (named constants), errors handled where they can be acted on, no dead code or commented-out code.
+- **Comments: concise, but they explain.** One or two short lines on *why*, not a restatement of *what*. Constants carry their unit and what raising or lowering them does.
 - Thresholds are measured in palms (relative to the hand's size in the frame), so they work at any distance from the camera.
 - Engine logic stays free of OS calls, so it can be replayed from recordings and tested.
 - New behaviour comes with a test in `tests/`; a gesture fix also comes with its score on a real recording.
 - No new dependencies without a reason.
+
+**Touching old code:** when a change goes through an existing function that is hard to read, it may be rewritten for readability, but **only after the developer approves it**. Propose the rewrite (what and why) first; never mix an unapproved refactor into a fix.
