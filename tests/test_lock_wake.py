@@ -58,6 +58,22 @@ def test_the_lock_state_is_polled_not_asked_every_frame():
         assert d.screen_locked(now=10.0 + core.LOCK_POLL_SECONDS) is True
 
 
+def test_windows_lock_calls_the_system_lock_not_keys():
+    # A synthetic Win+L is ignored by Windows (#30).
+    locked = []
+    old_os, old_lock = core.OS_NAME, core._windows_lock
+    core.OS_NAME, core._windows_lock = "Windows", lambda: locked.append(True)
+    try:
+        with dispatcher_with([PRIMARY]) as (d, pag, _s):
+            keys = []
+            pag.hotkey = lambda *k, **_kw: keys.append(k)
+            d._do("lock", 1)
+            assert locked == [True]
+            assert not keys, keys
+    finally:
+        core.OS_NAME, core._windows_lock = old_os, old_lock
+
+
 def test_wake_turns_the_display_on():
     with dispatcher_with([PRIMARY]) as (d, _pag, _s):
         woken = []
