@@ -74,7 +74,7 @@ DEFAULT_SETTINGS = {
     "theme": "system",
     "display_mode": "current",
     "pointer_mode": core.POINTER_MODE,
-    "scroll_mode": core.SCROLL_MODE,
+    "scroll_mode": "tilt",                 # Windows only for now (#22)
 }
 
 # Where the pointer box reaches: the screen the cursor is on, or every

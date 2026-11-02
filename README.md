@@ -49,7 +49,7 @@ Voice Control > Commands > +): phrase "Cenno on", action **Open URL**,
 |---|---|
 | Slap right / left, open or flat hand | Previous / next Space |
 | Open hand swipe up / down | Mission Control / minimize the front window (down closes Mission Control) |
-| Two fingers held together, tilted up / down | Scroll: level is neutral, pointing up scrolls up, down scrolls down, and the steeper they point the faster. The gas pedal (hand height) and drag modes are in the **Scrolling** menu |
+| Two fingers down / up | Scroll like a gas pedal: below the point where the gesture started scrolls down, above it up |
 | Two-finger swipe right / left | Back / Forward |
 | Point sideways with the index (hand on its side, thumb below) | Move the cursor |
 | Pinch thumb tip to index tip | Click; twice = double-click; hold = drag |

@@ -294,11 +294,9 @@ def test_sweep_right_after_leaving_the_face_fires():
 
 
 # --- 5. two-finger scrolling at the face does nothing ---------------------
-# (the motion modes; tilt is a held angle and works at the face)
 
 def test_two_finger_stroke_at_the_face_does_not_scroll():
     eng, log = core.GestureEngine(), []
-    eng.scroll_mode = "joystick"
     vertical_stroke(eng, log, two_hand, FACE_BOX)
     assert "scroll_drag" not in names(log), log
     assert "scroll_fling" not in names(log), log
@@ -306,7 +304,6 @@ def test_two_finger_stroke_at_the_face_does_not_scroll():
 
 def test_two_finger_stroke_without_a_face_scrolls():
     eng, log = core.GestureEngine(), []
-    eng.scroll_mode = "joystick"
     vertical_stroke(eng, log, two_hand, None)
     assert "scroll_drag" in names(log), log
 

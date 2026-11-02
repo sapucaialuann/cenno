@@ -13,6 +13,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import hand_desktop_switcher as core            # noqa: E402
 
+core.SCROLL_MODE = "tilt"     # the Windows app's default; every engine here tilts
+
 FPS = 30.0
 W, H = 640, 480
 WRIST = (320.0, 300.0)
@@ -77,10 +79,6 @@ def test_fixtures_are_two_fingers():
         for mirror in (False, True):
             assert pose_of(two_hand(angle, mirror=mirror)) == "two", (angle, mirror)
     assert pose_of(two_hand(45, spread=80)) == "two"
-
-
-def test_default_mode_is_tilt():
-    assert core.GestureEngine().scroll_mode == "tilt"
 
 
 def test_level_does_not_scroll():

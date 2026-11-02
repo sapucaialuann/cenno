@@ -16,9 +16,9 @@ frame, so they work whether you sit close to the camera or across the room):
                               or closes an overview a swipe opened (Esc)
 
   TWO FINGERS (index + middle up, ring + pinky curled)
-    * tilt up / down       -> scroll: fingers held together and level are
-                              neutral; pointing above level scrolls up,
-                              below it down, faster the steeper they point
+    * push down / up       -> scroll, like a gas pedal: where the gesture
+                              starts is neutral, below it the page scrolls
+                              down, above it up, and it stops dead at the end
     * swipe right / left   -> Back / Forward               (Cmd+[ / Cmd+])
 
   POINT (index across the frame, hand on its side, thumb below)
@@ -58,9 +58,10 @@ Design notes
   * Shortcuts are sent with real key presses (Control down, arrow, Control
     up), which is what macOS needs to switch Spaces.  Media keys (volume,
     play/pause) are real system media keys, so the native HUD appears.
-  * Scrolling is pixel-smooth at 120 Hz, on its own thread.  The angle the
-    two fingers point at sets the speed, wherever the hand is, and there is
-    no momentum.  A gas pedal (hand height) and a drag mode are also there.
+  * Scrolling is pixel-smooth at 120 Hz, on its own thread.  The two-finger
+    gesture works like a gas pedal: the further the hand leaves the neutral
+    point, the faster the page moves, and there is no momentum.  On Windows
+    the default is tilt: the angle the two fingers point at sets the speed.
   * Several displays: the pointer can stay on the screen under the cursor
     (default) or span every screen, so moving the hand sideways walks from one
     monitor to the next.  Scrolling and Space switching go to the screen the
@@ -211,11 +212,12 @@ NAV_SWIPE_VELOCITY_PALMS = 8.0
 SCROLL_PX_PER_PALM = 350       # screen pixels per palm of hand travel
 SCROLL_DEADZONE_PALMS_S = 0.6  # below this, drift is ignored (soft ramp)
 SCROLL_DIRECTION = 1           # 1 = drag the page (touchscreen); -1 = invert
-# How the two-finger gesture scrolls: "tilt" = the angle the fingers point
-# at sets the speed (#22), "joystick" = gas pedal (the spot where the
-# gesture starts is neutral; below it the page scrolls down, above it up,
-# with no momentum), "drag" = the page follows the hand.
-SCROLL_MODE = "tilt"
+# How the two-finger gesture scrolls: "joystick" = gas pedal (the spot
+# where the gesture starts is neutral; below it the page scrolls down,
+# above it up, with no momentum), "drag" = the page follows the hand,
+# "tilt" = the angle the fingers point at sets the speed (#22; the
+# Windows app's default).
+SCROLL_MODE = "joystick"
 # Tilt: level is neutral, pointing straight up or down is top speed.
 TILT_DEADZONE_DEG = 20         # around level: no scroll (raise if it creeps)
 TILT_MAX_PX_S = 3000           # px/s with the fingers straight up or down
@@ -2608,7 +2610,8 @@ HELP_LINES_MAC = (
     else "open/flat swipe <- ->   prev / next Space",
     "open hand swipe up      Mission Control",
     "open hand swipe down    minimize window",
-    "2 fingers tilt up/down  scroll (steeper = faster)",
+    "2 fingers down / up     scroll (gas pedal)"
+    if SCROLL_MODE == "joystick" else "2 fingers move / flick  scroll (glides)",
     "2 fingers swipe -> <-   back / forward",
     "point sideways          move cursor",
     "pinch thumb to index    click (x2 / hold=drag)",
