@@ -166,6 +166,14 @@ FACE = (235.0, 60.0, 405.0, 275.0)   # where a face sits in the preview
 HOME = (320.0, 300.0)                # the hand held up in front of the camera
 OFF = 420.0                          # how far below HOME the hand is out of view
 
+# Pointing sideways, the way the docs ask for it: the hand on its side, the
+# index across the frame and the thumb below it.  270 degrees lays the index
+# down to the left (the tip ends up a whole palm left of the knuckle) and the
+# flip shows the back of the hand, which is how a sideways hand looks in the
+# mirror.
+SIDEWAYS_ROT = 270
+SIDEWAYS_FLIP = True
+
 
 def _ease(kind, u):
     if kind == "lin":
@@ -468,11 +476,11 @@ def _back_forward():
     return tl
 
 
-@_step("point_move", "point and move, no pinch")
+@_step("point_move", "point sideways and move, no pinch")
 def _point_move():
     tl = Timeline()
     tl.hide(0.4)
-    tl.rise("relax", 320, 300, 0.9)
+    tl.rise("relax", 320, 300, 0.9, rot=SIDEWAYS_ROT, flip=SIDEWAYS_FLIP)
     tl.to(0.4, "point")
     tl.hold(0.5)
     tl.mark(50)
@@ -491,7 +499,7 @@ POSES["gap"] = lerp_pose(POSES["point"], POSES["pinch"], 0.45)
 def _point_gap():
     tl = Timeline()
     tl.hide(0.4)
-    tl.rise("relax", 320, 300, 0.9)
+    tl.rise("relax", 320, 300, 0.9, rot=SIDEWAYS_ROT, flip=SIDEWAYS_FLIP)
     tl.to(0.4, "point")
     tl.hold(0.3)
     tl.to(0.5, "gap")
@@ -509,7 +517,7 @@ def _point_gap():
 def _click():
     tl = Timeline()
     tl.hide(0.4)
-    tl.rise("relax", 320, 300, 0.9)
+    tl.rise("relax", 320, 300, 0.9, rot=SIDEWAYS_ROT, flip=SIDEWAYS_FLIP)
     tl.to(0.4, "point")
     tl.hold(0.7)
     for _ in range(4):
@@ -529,7 +537,7 @@ def _click():
 def _drag():
     tl = Timeline()
     tl.hide(0.4)
-    tl.rise("relax", 300, 300, 0.9)
+    tl.rise("relax", 300, 300, 0.9, rot=SIDEWAYS_ROT, flip=SIDEWAYS_FLIP)
     tl.to(0.4, "point")
     tl.hold(0.7)
     for _ in range(3):

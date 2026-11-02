@@ -51,8 +51,8 @@ Voice Control > Commands > +): phrase "Cenno on", action **Open URL**,
 | Open hand swipe up / down | Mission Control / minimize the front window (down closes Mission Control) |
 | Two fingers down / up | Scroll like a gas pedal: below the point where the gesture started scrolls down, above it up |
 | Two-finger swipe right / left | Back / Forward |
-| Point with index | Move the cursor |
-| Pinch while pointing | Click; twice = double-click; hold = drag |
+| Point sideways with the index (hand on its side, thumb below) | Move the cursor |
+| Pinch thumb tip to index tip | Click; twice = double-click; hold = drag |
 | OK sign + twist | Volume |
 | Thumbs up (hold) | Play / pause |
 | Thumbs down (hold) | Undo (deletes the last dictated text) |
@@ -182,8 +182,8 @@ Cenno on Windows is intentionally Windows-native rather than a macOS clone:
 | Open hand swipe down | Show desktop (`Win+D`) |
 | Two fingers down / up | Scroll like a gas pedal: below the point where the gesture started scrolls down, above it up |
 | Two-finger swipe right / left | Back / Forward (`Alt+Left/Right`) |
-| Point with index | Move the cursor |
-| Pinch while pointing | Click; twice = double-click; hold = drag |
+| Point sideways with the index (hand on its side, thumb below) | Move the cursor |
+| Pinch thumb tip to index tip | Click; twice = double-click; hold = drag |
 | OK sign + twist | Volume |
 | Thumbs up (hold) | Play / pause |
 | Thumbs down (hold) | Undo (deletes the last dictated text) |
