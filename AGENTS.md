@@ -1,0 +1,63 @@
+# Cenno: notes for coding agents
+
+Cenno controls macOS and Windows with hand gestures through the webcam
+(MediaPipe hand landmarks, no network). This file is for any coding agent or
+person working on the repo. User-facing docs are in README.md.
+
+## Layout
+
+| Path | What it is |
+|---|---|
+| `hand_desktop_switcher.py` | The core. `classify_pose` (landmarks -> pose), `GestureEngine` (poses and motion -> abstract events, no OS calls, fully testable), `Dispatcher` / `PointerAnimator` / `ScrollAnimator` (events -> keys, mouse and scroll on background threads). All tuning constants are at the top. Also runs standalone: `python3 hand_desktop_switcher.py`. |
+| `cenno_app.py` | macOS menu bar app (rumps): camera thread, preview panel, settings, menu. |
+| `cenno_app_win.py` | Windows tray app, same structure. Keep the two in step. |
+| `displays.py`, `headzone.py`, `shortcuts.py`, `recorder_*.py`, `pointer_box.py`, `theme.py` | Multi-display layout, "held like a phone by the ear" check, recorded keyboard shortcuts, shortcut recorders, preview box style, design tokens. |
+| `tests/` | Plain-assert tests on synthetic landmarks, no camera. `tests/run_all.py` runs every `test_*.py`. |
+| `tools/` | Developer tools (not shipped): gesture check, gesture demos, slap scorer. See below. |
+| `checks/` | Recordings of real hands. Git-ignored: they stay on the machine that made them. |
+| `build_mac.sh`, `Cenno.spec`, `build_win.bat`, `Cenno_win.spec`, `installer/` | Builds. |
+
+## Run, test, build
+
+- Tests: `python3 tests/run_all.py` must print `all tests passed` before any merge. It needs no camera and no cv2.
+- Build the Mac app: `./build_mac.sh` makes `dist/Cenno.app` and `dist/Cenno-<VERSION>.dmg`, using its own venv `.venv-build` (Python with mediapipe 0.10.9 and OpenCV). It signs with a local certificate when one exists (`installer/make_dev_cert_mac.sh`), so Camera and Accessibility permissions survive rebuilds.
+- Anything that needs cv2 or MediaPipe (the gesture tools) runs with `.venv-build/bin/python`.
+- The app logs to `~/Library/Logs/Cenno.log` (each action, `fps:` once a minute, `gather missed: <reason>` for Spotlight attempts that did not fire). Settings: `~/Library/Application Support/Cenno/settings.json`.
+
+## Gesture work: real recordings are the standard
+
+Gestures are tuned on recordings of the user's real hand, not on synthetic hands
+alone, and the recordings that count are **natural** ones: the user does each
+gesture the way they would, with no feedback on screen. A coached session (live
+"what Cenno sees" panel, demos) makes people adapt to the test, so it measures the
+adaptation. People also use both hands, and gestures look different from each side.
+
+- Record (camera; switch the Cenno app off first, the tool refuses otherwise):
+  `.venv-build/bin/python tools/gesture_check.py natural --only slap_right,slap_left --hand both`
+- Score any recording, natural or guided: `python3 tools/gesture_check.py report checks/<file>.json`.
+  Natural reports give per gesture and hand: hits, misses, wrong actions, wrong hand seen.
+- Guided mode (`record`) has demos and a live explanation of why a gesture is not
+  recognised. It is good for diagnosis, not for tuning targets.
+- `tools/gesture_demos.py <step>` shows the intended gesture; every demo is tested to fire its own step.
+- `tools/slap_score.py` counts Space switches across guided recordings.
+
+A gesture change is accepted when it raises the natural hit rate for the gestures
+it targets and does not make any recorded step that passed before fail. Then it
+gets tried in real use: the user's experience there beats any score.
+
+## Branches, issues, releases
+
+- `main` = released. Releases come from tags: pushing `vX.Y.Z` runs `.github/workflows/release.yml`, which builds the .dmg, the Windows installer and the file the website serves.
+- `dev` = integration branch, pushed to GitHub. All work lands here; it should stay usable.
+- Work branches are short-lived and branch from `dev`. Merge them into `dev` once reviewed and tested, then delete them. Push anything that lives longer than a working session; nothing should exist only on one machine.
+- Bigger projects (the pointer: issue #7) get their own pushed branch, merged into `dev` by pull request.
+- Every problem is a GitHub issue, labelled by area (`spaces`, `pointer`, `spotlight`, `dictation`, `gestures`, `windows`, `release`, `tuning`) and placed in a milestone (`0.3.0`, `Pointer project`). Reference the issue in commits and close it when fixed, with the measured result.
+- The Windows app shares the engine. A change to the engine or to `cenno_app.py` usually needs the same change in `cenno_app_win.py`, and Windows builds must be tested on Windows before a release (#4).
+
+## Code style
+
+- Comments explain *why*, in short plain English. Constants carry a comment with their unit and what raising or lowering them does.
+- Thresholds are measured in palms (relative to the hand's size in the frame), so they work at any distance from the camera.
+- Engine logic stays free of OS calls, so it can be replayed from recordings and tested.
+- New behaviour comes with a test in `tests/`; a gesture fix also comes with its score on a real recording.
+- No new dependencies without a reason.
