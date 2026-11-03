@@ -120,7 +120,7 @@ def gesture_lines():
             f"Slap {next_dir} · Next virtual desktop",
             "Swipe up · Task View",
             "Swipe down · Show desktop",
-            "Two fingers below or above start · Scroll",
+            "Two fingers together, tilt up or down · Scroll",
             "Two fingers swipe · Back or forward",
             "Point sideways · Move cursor",
             "Pinch thumb + index · Click, twice to double click, hold to drag",
