@@ -227,6 +227,10 @@ TILT_EXPONENT = 2.0            # > 1: fine control near level, fast when steep
 TILT_TOGETHER_MAX_PALMS = 0.45
 # Fingers aimed at the camera look short and their angle is noise.
 TILT_MIN_LEN_PALMS = 0.5
+# Back / Forward swipes are made with tilted fingers too.  Sideways faster
+# than this pauses the scroll, and the hand must then be calm this long.
+TILT_SWEEP_PALMS_S = 2.0
+TILT_SETTLE_SECONDS = 0.3
 # Joystick: how far the hand must leave the neutral point before the page
 # moves, and how fast it moves from there.
 JOY_DEADZONE_PALMS = 0.35      # dead zone around the neutral point
@@ -821,6 +825,8 @@ class GestureEngine:
         self.scroll_block_until = 0.0
         self.scroll_still_since = None
         self.scroll_neutral = None         # joystick neutral point, per pose
+        self.tilt_calm_since = None        # hand not sweeping since (tilt)
+        self.tilt_blocked = False          # after Back / Forward, until level
         self.fx = self.fy = None           # cursor filters
         self.pinched = False
         self.pinch_votes = 0
@@ -1200,10 +1206,7 @@ class GestureEngine:
         # the hold poses it also works with the hand beside the face.
         if self.pose == "two" and warmed and step is not None:
             if self.scroll_mode == "tilt":
-                speed = tilt_speed(pts, palm)
-                if speed:
-                    # scroll_drag is in palms (the Dispatcher's unit).
-                    ev.append(("scroll_drag", speed * step[2] / SCROLL_PX_PER_PALM))
+                self._tilt_step(pts, palm, step, now, ev)
             elif not self.near_face:
                 self._scroll_step(step, now, ev, cy, palm)
 
@@ -1248,6 +1251,9 @@ class GestureEngine:
                 self.buf.clear()
                 self.armed, self.still_since = False, None
                 self.last_fire = now
+                if fired in ("back", "forward"):
+                    # The fingers are often still tilted after the swipe.
+                    self.tilt_blocked = True
                 if fired in ("space_left", "space_right"):
                     # A slap is not a wave: drop the wave tracker, or the
                     # return stroke could be counted as a wave.
@@ -1607,6 +1613,23 @@ class GestureEngine:
             self.rel_cursor = self.cursor
         ev.append(("pointer_end", None))
         self.pointer_live = False
+
+    def _tilt_step(self, pts, palm, step, now, ev):
+        """Tilt scroll (#22).  Paused while the hand sweeps sideways, and
+        after a Back / Forward swipe until the fingers come back level."""
+        speed = tilt_speed(pts, palm)
+        if not speed:
+            self.tilt_blocked = False
+        if abs(step[0]) / step[2] > TILT_SWEEP_PALMS_S:
+            self.tilt_calm_since = None
+            return
+        if self.tilt_calm_since is None:
+            self.tilt_calm_since = now
+        if (self.tilt_blocked or not speed
+                or now - self.tilt_calm_since < TILT_SETTLE_SECONDS):
+            return
+        # scroll_drag is in palms (the Dispatcher's unit).
+        ev.append(("scroll_drag", speed * step[2] / SCROLL_PX_PER_PALM))
 
     def _scroll_step(self, step, now, ev, cy=None, palm=None):
         if self.scroll_mode == "joystick":

@@ -149,6 +149,40 @@ def test_back_forward_swipe_still_fires_with_a_tilted_hand():
         assert names & {"back", "forward"}, (sign, sorted(names))
 
 
+def swipe(eng, log, angle, sign, t):
+    """Hold, then a fast sideways sweep, as in Back / Forward."""
+    t = run(eng, two_hand(angle, dx=-sign * 150), 0.6, t, log)
+    return run(eng, lambda i: two_hand(angle, dx=-sign * 150 + sign * 50 * i), 0.2, t, log)
+
+
+def drags_since(log, t):
+    return [e for e in log if e[1] == "scroll_drag" and e[0] >= t]
+
+
+def test_no_scroll_while_sweeping_sideways():
+    eng, log = core.GestureEngine(), []
+    t = run(eng, two_hand(50, dx=-150), 0.6, 0.0, log)
+    start = t
+    run(eng, lambda i: two_hand(50, dx=-150 + 50 * i), 0.2, t, log)
+    # (the smoothed hand lags one frame behind, so the first one may scroll)
+    assert len(drags_since(log, start)) <= 1, drags_since(log, start)
+
+
+def test_no_scroll_after_a_swipe_until_the_fingers_come_level():
+    eng, log = core.GestureEngine(), []
+    t = swipe(eng, log, 50, 1, 0.0)
+    assert {"back", "forward"} & {e[1] for e in log}, log
+    start = t
+    # still tilted after the swipe: blocked
+    t = run(eng, two_hand(50, dx=150), 1.0, t, log)
+    assert not drags_since(log, start), drags_since(log, start)
+    # level, then tilt again: scrolls (dx=50 keeps level fingers in frame)
+    t = run(eng, two_hand(0, dx=50), 0.5, t, log)
+    start = t
+    run(eng, two_hand(50, dx=50), 0.8, t, log)
+    assert drags_since(log, start), "no scroll after levelling"
+
+
 if __name__ == "__main__":
     failed = 0
     for name, test in list(globals().items()):
