@@ -180,7 +180,7 @@ Cenno on Windows is intentionally Windows-native rather than a macOS clone:
 | Slap right / left, open or flat hand | Switch window (Alt+Tab): the first slap goes to the last window; more slaps within about 3 seconds step back / forward through the switcher; any other gesture picks the window at once |
 | Open hand swipe up | Task View (`Win+Tab`) |
 | Open hand swipe down | Show desktop (`Win+D`) |
-| Two fingers down / up | Scroll like a gas pedal: below the point where the gesture started scrolls down, above it up |
+| Two fingers held together, tilted up / down | Scroll: level is neutral, pointing up scrolls up, down scrolls down, and the steeper they point the faster. The gas pedal (hand height) and drag modes are in the **Scrolling** menu |
 | Two-finger swipe right / left | Back / Forward (`Alt+Left/Right`) |
 | Point sideways with the index (hand on its side, thumb below) | Move the cursor |
 | Pinch thumb tip to index tip | Click; twice = double-click; hold = drag |
