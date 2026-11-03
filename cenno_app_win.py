@@ -115,9 +115,8 @@ STARTUP_REG_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 
 def gesture_lines():
     """Menu list in the 'Gesture · Action' pattern, in Windows words."""
-    prev_dir, next_dir = ("right", "left") if core.NATURAL_SWIPE else ("left", "right")
-    return (f"Slap {prev_dir} · Previous virtual desktop",
-            f"Slap {next_dir} · Next virtual desktop",
+    return ("Slap right · Next window (Alt+Tab)",
+            "Slap left · Previous window (Alt+Tab)",
             "Swipe up · Task View",
             "Swipe down · Show desktop",
             "Two fingers together, tilt up or down · Scroll",
