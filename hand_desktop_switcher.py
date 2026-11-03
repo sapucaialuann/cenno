@@ -1858,6 +1858,13 @@ def _windows_input_desktop_locked():
         user32.CloseDesktop(desk)
 
 
+def _windows_lock():
+    """Lock Windows, the same lock Win+L does."""
+    import ctypes
+    if not ctypes.windll.user32.LockWorkStation():
+        print("WARN: LockWorkStation failed")
+
+
 def _windows_wheel(delta):
     """Turn the mouse wheel by `delta` 1/120 notches (+ = up)."""
     import ctypes
@@ -2085,6 +2092,10 @@ class Dispatcher:
             return
         if name == "lock" and OS_NAME == "Darwin":
             self._lock_screen()
+            return
+        if name == "lock" and OS_NAME == "Windows":
+            # Windows ignores a synthetic Win+L (#30): call the lock itself.
+            _windows_lock()
             return
         if name == "wake":
             self._wake_display()
