@@ -35,8 +35,8 @@ def test_settings_path_on_windows():
 
 def test_settings_path_on_macos():
     path = gesture_check.settings_path("darwin")
-    assert path.endswith(os.path.join("Library", "Application Support",
-                                      "Cenno", "settings.json")), path
+    assert path.replace("\\", "/").endswith(
+        "Library/Application Support/Cenno/settings.json"), path
 
 
 def test_app_running_on_windows():
