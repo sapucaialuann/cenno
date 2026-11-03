@@ -160,7 +160,7 @@ That writes `dist/Cenno-<version>.dmg`.
 Cenno on Windows is intentionally Windows-native rather than a macOS clone:
 
 - **System tray, not a menu bar.** Windows has no menu bar, so Cenno lives in the system tray (hand icon): on/off, pause, camera preview, mouse control, open at startup, gesture list.
-- **Windows instead of Spaces.** A slap switches windows with Alt+Tab: the first slap goes to the last window, and Cenno keeps Alt held for a moment, so more slaps step through the switcher (one way forward, the other back). When you stop, the chosen window comes to the front.
+- **Windows instead of Spaces.** A slap switches windows with Alt+Tab: the first slap goes to the last window, and Cenno keeps Alt held for a moment, so more slaps step through the switcher (one way forward, the other back). About 3 seconds after the last slap, or at once with any other gesture, the chosen window comes to the front.
 - **Task View instead of Mission Control.** Swipe up opens Task View (`Win+Tab`), not Mission Control.
 - **Show desktop instead of App windows.** Swipe down shows the desktop (`Win+D`), since Windows has no app-windows overview.
 - **Start menu instead of Spotlight.** Gathering fingertips opens the Start menu (`Win`), not Spotlight.
@@ -177,7 +177,7 @@ Cenno on Windows is intentionally Windows-native rather than a macOS clone:
 
 | Gesture | Action |
 |---|---|
-| Slap right / left, open or flat hand | Switch window (Alt+Tab): the first slap goes to the last window; more slaps within about a second step back / forward through the switcher |
+| Slap right / left, open or flat hand | Switch window (Alt+Tab): the first slap goes to the last window; more slaps within about 3 seconds step back / forward through the switcher; any other gesture picks the window at once |
 | Open hand swipe up | Task View (`Win+Tab`) |
 | Open hand swipe down | Show desktop (`Win+D`) |
 | Two fingers down / up | Scroll like a gas pedal: below the point where the gesture started scrolls down, above it up |

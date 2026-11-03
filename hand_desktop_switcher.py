@@ -391,7 +391,9 @@ APP_SHORTCUTS = ("undo", "back", "forward", "app_windows", "launcher")
 # Windows: the slap is Alt+Tab (#31).  The first slap goes to the last
 # window; Alt stays down this long after each slap so more slaps step
 # through the switcher (longer = more time between slaps, slower to land).
-ALT_TAB_HOLD_SECONDS = 1.2
+# Real slaps come 2.5-4.5 s apart (the hand settles and the return stroke
+# is ignored), so 1.2 s let Alt go before every next slap.
+ALT_TAB_HOLD_SECONDS = 3.0
 # How often the scroll thread may re-check which screen it should be on.
 FOCUS_CHECK_SECONDS = 0.05
 
