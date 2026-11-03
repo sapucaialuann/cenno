@@ -156,6 +156,7 @@ jobs:
 
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_REPO: ${{ github.repository }} # no checkout in this job, so gh needs the repo named
       TAG: ${{ github.event.inputs.tag || github.ref_name }}
       # The website's bucket. Without a token the release still goes out; the
       # site keeps serving the build it already has.
