@@ -93,6 +93,26 @@ def test_dispatcher_slap_on_windows_uses_alt_tab_and_other_gestures_let_go():
         assert keys[-1] == "Alt up", keys
 
 
+def test_the_selection_follows_the_hand():
+    # A slap to the right moves the selection right (Tab), whichever way
+    # NATURAL_SWIPE names the event.
+    for natural in (True, False):
+        old = core.NATURAL_SWIPE
+        core.NATURAL_SWIPE = natural
+        try:
+            right = "space_left" if natural else "space_right"
+            left = "space_right" if natural else "space_left"
+            t, keys = tabber()
+            with dispatcher_with([PRIMARY]) as (d, _pag, _s):
+                d.alt_tab = t
+                for name in (right, right, left):
+                    d._do(name, 1)
+            t.release()
+        finally:
+            core.NATURAL_SWIPE = old
+        assert taps(keys) == ["Tab", "Tab", "Shift+Tab"], (natural, keys)
+
+
 if __name__ == "__main__":
     failed = 0
     for name, test in list(globals().items()):

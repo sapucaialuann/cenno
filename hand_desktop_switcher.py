@@ -2070,7 +2070,10 @@ class Dispatcher:
     def _do(self, name, n):
         if self.alt_tab is not None:
             if name in ("space_left", "space_right"):
-                self.alt_tab.step(forward=name == "space_right")
+                # The selection follows the hand: a slap to the right moves
+                # it right (Tab).  With NATURAL_SWIPE that is "space_left".
+                hand_right = (name == "space_left") == NATURAL_SWIPE
+                self.alt_tab.step(forward=hand_right)
                 return
             # Any other gesture lets Alt go first, or a click would be Alt+click.
             self.alt_tab.release()
@@ -2638,8 +2641,7 @@ HELP_LINES_MAC = (
     "key t: test Space switch (no gesture)",
 )
 HELP_LINES_WIN = (
-    "open/flat swipe -> <-   prev / next window" if NATURAL_SWIPE
-    else "open/flat swipe <- ->   prev / next window",
+    "open/flat slap -> / <-  next / prev window",
     "open hand swipe up      Task View",
     "open hand swipe down    show desktop",
     "2 fingers down / up     scroll (gas pedal)"
@@ -2673,7 +2675,7 @@ ACTION_LABELS_MAC = {
     "click": "CLICK", "mouse_down": "DRAG", "mouse_up": "DROP",
 }
 ACTION_LABELS_WIN = {
-    "space_left": "WINDOW <-", "space_right": "WINDOW ->",
+    "space_left": "SWITCH WINDOW", "space_right": "SWITCH WINDOW",
     "overview": "TASK VIEW", "app_windows": "SHOW DESKTOP",
     "close_overview": "CLOSE TASK VIEW", "back": "BACK", "forward": "FORWARD",
     "launcher": "START MENU", "lock": "LOCK SCREEN", "wake": "WAKE SCREEN", "volume_up": "VOLUME +", "volume_down": "VOLUME -",
