@@ -60,7 +60,8 @@ Design notes
     play/pause) are real system media keys, so the native HUD appears.
   * Scrolling is pixel-smooth at 120 Hz, on its own thread.  The two-finger
     gesture works like a gas pedal: the further the hand leaves the neutral
-    point, the faster the page moves, and there is no momentum.
+    point, the faster the page moves, and there is no momentum.  On Windows
+    the default is tilt: the angle the two fingers point at sets the speed.
   * Several displays: the pointer can stay on the screen under the cursor
     (default) or span every screen, so moving the hand sideways walks from one
     monitor to the next.  Scrolling and Space switching go to the screen the
@@ -213,8 +214,23 @@ SCROLL_DEADZONE_PALMS_S = 0.6  # below this, drift is ignored (soft ramp)
 SCROLL_DIRECTION = 1           # 1 = drag the page (touchscreen); -1 = invert
 # How the two-finger gesture scrolls: "joystick" = gas pedal (the spot
 # where the gesture starts is neutral; below it the page scrolls down,
-# above it up, with no momentum), "drag" = the page follows the hand.
+# above it up, with no momentum), "drag" = the page follows the hand,
+# "tilt" = the angle the fingers point at sets the speed (#22; the
+# Windows app's default).
 SCROLL_MODE = "joystick"
+# Tilt: level is neutral, pointing straight up or down is top speed.
+TILT_DEADZONE_DEG = 20         # around level: no scroll (raise if it creeps)
+TILT_MAX_PX_S = 3000           # px/s with the fingers straight up or down
+TILT_EXPONENT = 2.0            # > 1: fine control near level, fast when steep
+# Index and middle tips closer than this count as "together"; a spread V
+# does not scroll (it stays free for other gestures, see #21).
+TILT_TOGETHER_MAX_PALMS = 0.45
+# Fingers aimed at the camera look short and their angle is noise.
+TILT_MIN_LEN_PALMS = 0.5
+# Back / Forward swipes are made with tilted fingers too.  Sideways faster
+# than this pauses the scroll, and the hand must then be calm this long.
+TILT_SWEEP_PALMS_S = 2.0
+TILT_SETTLE_SECONDS = 0.3
 # Joystick: how far the hand must leave the neutral point before the page
 # moves, and how fast it moves from there.
 JOY_DEADZONE_PALMS = 0.35      # dead zone around the neutral point
@@ -440,6 +456,23 @@ def finger_ratio(pts, finger):
     return dist(pts[0], pts[tip]) / max(dist(pts[0], pts[pip]), 1e-6)
 
 
+def tilt_speed(pts, palm):
+    """Scroll speed in px/s (+ = up) from the angle index and middle point
+    at.  Zero for a spread V, near level, or fingers aimed at the camera."""
+    if dist(pts[8], pts[12]) / palm > TILT_TOGETHER_MAX_PALMS:
+        return 0.0
+    dx = (pts[8][0] - pts[5][0] + pts[12][0] - pts[9][0]) / 2
+    dy = (pts[8][1] - pts[5][1] + pts[12][1] - pts[9][1]) / 2
+    if math.hypot(dx, dy) / palm < TILT_MIN_LEN_PALMS:
+        return 0.0
+    # Only up / down counts, so the left and right hand behave the same.
+    angle = math.degrees(math.atan2(-dy, abs(dx)))    # image y grows down
+    reach = (abs(angle) - TILT_DEADZONE_DEG) / (90 - TILT_DEADZONE_DEG)
+    if reach <= 0:
+        return 0.0
+    return math.copysign(TILT_MAX_PX_S * reach ** TILT_EXPONENT, angle)
+
+
 def classify_pose(pts, palm):
     """Return (pose, features).  Poses: ok, gather, point, thumbs_up,
     thumbs_down, thumb_left, thumb_right, fist, horns,
@@ -636,7 +669,7 @@ class GestureEngine:
 
     def __init__(self):
         self.paused = False
-        self.scroll_mode = SCROLL_MODE     # "joystick" (gas pedal) or "drag"
+        self.scroll_mode = SCROLL_MODE     # "tilt", "joystick" or "drag"
         self.last_fire = -1e9
         self.overview_until = 0.0
         self.last_open_time = -1e9
@@ -792,6 +825,8 @@ class GestureEngine:
         self.scroll_block_until = 0.0
         self.scroll_still_since = None
         self.scroll_neutral = None         # joystick neutral point, per pose
+        self.tilt_calm_since = None        # hand not sweeping since (tilt)
+        self.tilt_blocked = False          # after Back / Forward, until level
         self.fx = self.fy = None           # cursor filters
         self.pinched = False
         self.pinch_votes = 0
@@ -853,8 +888,8 @@ class GestureEngine:
 
     def _scroll_release(self, now, ev):
         """Fingers 'lifted' (pose ended / hand gone): glide if moving fast."""
-        if self.scroll_mode == "joystick":
-            return                  # gas pedal: the page stops dead, no glide
+        if self.scroll_mode in ("tilt", "joystick"):
+            return                  # the page stops dead, no glide
         recent = [v for t, v in self.scroll_hist if t >= now - FLICK_WINDOW_SECONDS]
         if recent:
             peak = max(recent, key=abs)
@@ -1167,9 +1202,13 @@ class GestureEngine:
             self._pointer_step(pts, w, h, now, feats["pinch"],
                                feats["ratios"]["index"], ev)
 
-        # Two-finger scroll: drag follows the hand, flicks glide.
-        if self.pose == "two" and warmed and step is not None and not self.near_face:
-            self._scroll_step(step, now, ev, cy, palm)
+        # Two-finger scroll.  Tilt is a held angle, not a motion, so like
+        # the hold poses it also works with the hand beside the face.
+        if self.pose == "two" and warmed and step is not None:
+            if self.scroll_mode == "tilt":
+                self._tilt_step(pts, palm, step, now, ev)
+            elif not self.near_face:
+                self._scroll_step(step, now, ev, cy, palm)
 
         # Wave: open or flat hand side to side a few times -> lock screen.
         if self.pose in ("open", "flat") and warmed and not self.near_face:
@@ -1212,6 +1251,9 @@ class GestureEngine:
                 self.buf.clear()
                 self.armed, self.still_since = False, None
                 self.last_fire = now
+                if fired in ("back", "forward"):
+                    # The fingers are often still tilted after the swipe.
+                    self.tilt_blocked = True
                 if fired in ("space_left", "space_right"):
                     # A slap is not a wave: drop the wave tracker, or the
                     # return stroke could be counted as a wave.
@@ -1571,6 +1613,23 @@ class GestureEngine:
             self.rel_cursor = self.cursor
         ev.append(("pointer_end", None))
         self.pointer_live = False
+
+    def _tilt_step(self, pts, palm, step, now, ev):
+        """Tilt scroll (#22).  Paused while the hand sweeps sideways, and
+        after a Back / Forward swipe until the fingers come back level."""
+        speed = tilt_speed(pts, palm)
+        if not speed:
+            self.tilt_blocked = False
+        if abs(step[0]) / step[2] > TILT_SWEEP_PALMS_S:
+            self.tilt_calm_since = None
+            return
+        if self.tilt_calm_since is None:
+            self.tilt_calm_since = now
+        if (self.tilt_blocked or not speed
+                or now - self.tilt_calm_since < TILT_SETTLE_SECONDS):
+            return
+        # scroll_drag is in palms (the Dispatcher's unit).
+        ev.append(("scroll_drag", speed * step[2] / SCROLL_PX_PER_PALM))
 
     def _scroll_step(self, step, now, ev, cy=None, palm=None):
         if self.scroll_mode == "joystick":
@@ -2593,8 +2652,7 @@ HELP_LINES_WIN = (
     else "open/flat swipe <- ->   prev / next desktop",
     "open hand swipe up      Task View",
     "open hand swipe down    show desktop",
-    "2 fingers down / up     scroll (gas pedal)"
-    if SCROLL_MODE == "joystick" else "2 fingers move / flick  scroll (glides)",
+    "2 fingers tilt up/down  scroll (steeper = faster)",
     "2 fingers swipe -> <-   back / forward",
     "point sideways          move cursor",
     "pinch thumb to index    click (x2 / hold=drag)",
