@@ -37,7 +37,9 @@ if [ -x "$XCODE_DEV/usr/bin/actool" ]; then
   if DEVELOPER_DIR="$XCODE_DEV" xcrun actool assets/Cenno.icon \
       --compile "$PWD/build/assets" --app-icon Cenno --platform macosx \
       --minimum-deployment-target 12.0 --include-all-app-icons \
-      --output-partial-info-plist "$PWD/build/assets/partial.plist" >/dev/null; then
+      --output-partial-info-plist "$PWD/build/assets/partial.plist" >/dev/null \
+      && [ -f build/assets/Assets.car ]; then
+    # Older Xcode (the release runner's) exits 0 but writes no Assets.car.
     cp build/assets/Assets.car dist/Cenno.app/Contents/Resources/
     /usr/libexec/PlistBuddy -c "Add :CFBundleIconName string Cenno" dist/Cenno.app/Contents/Info.plist 2>/dev/null \
       || /usr/libexec/PlistBuddy -c "Set :CFBundleIconName Cenno" dist/Cenno.app/Contents/Info.plist
