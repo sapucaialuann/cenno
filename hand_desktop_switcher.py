@@ -380,16 +380,18 @@ DISPLAY_MODE_CURRENT = "current"
 DISPLAY_MODE_ALL = "all"
 # Gestures that belong to the screen the hand is on.  On macOS, Spaces and
 # Mission Control are per screen, so the cursor has to be moved there first.
-# On Windows, virtual desktops and Task View are global, but the scroll wheel
-# is sent to the window under the cursor, so the cursor still has to travel.
+# On Windows the slap switches windows with Alt+Tab (#31), which is global.
 _FOCUS_SCREEN_ACTIONS = {
     "Darwin": ("space_left", "space_right", "overview", "close_overview"),
-    "Windows": ("space_left", "space_right"),
 }
 FOCUS_SCREEN_ACTIONS = _FOCUS_SCREEN_ACTIONS.get(OS_NAME, ())
 # Shortcuts handled by the app in front rather than by the system (macOS):
 # these are sent with the modifier flags set on every key event.
 APP_SHORTCUTS = ("undo", "back", "forward", "app_windows", "launcher")
+# Windows: the slap is Alt+Tab (#31).  The first slap goes to the last
+# window; Alt stays down this long after each slap so more slaps step
+# through the switcher (longer = more time between slaps, slower to land).
+ALT_TAB_HOLD_SECONDS = 1.2
 # How often the scroll thread may re-check which screen it should be on.
 FOCUS_CHECK_SECONDS = 0.05
 
@@ -1795,6 +1797,64 @@ def _windows_input_desktop_locked():
         user32.CloseDesktop(desk)
 
 
+class AltTabber:
+    """Slaps drive Alt+Tab on Windows (#31).  The first slap presses
+    Alt+Tab and keeps Alt down; each slap within ALT_TAB_HOLD_SECONDS steps
+    the switcher (forward = Tab, back = Shift+Tab); then Alt is let go and
+    the chosen window comes to the front."""
+
+    ALT = shortcuts.make(["alt"], None, "Alt")
+    TAB = shortcuts.make([], 0x09, "Tab")
+    SHIFT_TAB = shortcuts.make(["shift"], 0x09, "Shift+Tab")
+
+    def __init__(self, hold=shortcuts.hold, hold_seconds=ALT_TAB_HOLD_SECONDS):
+        self.hold = hold                  # hold(shortcut, down), as in shortcuts
+        self.hold_seconds = hold_seconds
+        self.lock = threading.Lock()
+        self.alt_down = False
+        self.timer = None
+        self.slaps = 0                    # tells a stale release timer apart
+
+    def step(self, forward):
+        with self.lock:
+            self.slaps += 1
+            if self.timer is not None:
+                self.timer.cancel()
+            if not self.alt_down:
+                # The first slap goes to the last window, either direction.
+                self.hold(self.ALT, True)
+                self.alt_down = True
+                self._tap(self.TAB)
+            else:
+                self._tap(self.TAB if forward else self.SHIFT_TAB)
+            self.timer = threading.Timer(self.hold_seconds, self._expire,
+                                         args=(self.slaps,))
+            self.timer.daemon = True
+            self.timer.start()
+
+    def release(self):
+        """Let Alt go now: the window picked so far comes forward."""
+        with self.lock:
+            self._release()
+
+    def _expire(self, slaps):
+        with self.lock:
+            if slaps == self.slaps:       # no slap came in meanwhile
+                self._release()
+
+    def _release(self):
+        if self.timer is not None:
+            self.timer.cancel()
+            self.timer = None
+        if self.alt_down:
+            self.hold(self.ALT, False)
+            self.alt_down = False
+
+    def _tap(self, sc):
+        self.hold(sc, True)
+        self.hold(sc, False)
+
+
 class Dispatcher:
     def __init__(self):
         import pyautogui
@@ -1815,6 +1875,7 @@ class Dispatcher:
         self.refresh_displays()
         self.scroller = ScrollAnimator(self.quartz, self.pag,
                                        before_post=self._focus_screen)
+        self.alt_tab = AltTabber() if OS_NAME == "Windows" else None
         self.pointer = PointerAnimator(self.quartz, self.pag, self.layout,
                                        cursor_pos=self.cursor_position)
         self.locked = False
@@ -2005,6 +2066,12 @@ class Dispatcher:
                 print(f"WARN: action {name} failed: {exc}")
 
     def _do(self, name, n):
+        if self.alt_tab is not None:
+            if name in ("space_left", "space_right"):
+                self.alt_tab.step(forward=name == "space_right")
+                return
+            # Any other gesture lets Alt go first, or a click would be Alt+click.
+            self.alt_tab.release()
         if name.startswith("pause"):
             return
         if name == "dictation":
@@ -2569,8 +2636,8 @@ HELP_LINES_MAC = (
     "key t: test Space switch (no gesture)",
 )
 HELP_LINES_WIN = (
-    "open/flat swipe -> <-   prev / next desktop" if NATURAL_SWIPE
-    else "open/flat swipe <- ->   prev / next desktop",
+    "open/flat swipe -> <-   prev / next window" if NATURAL_SWIPE
+    else "open/flat swipe <- ->   prev / next window",
     "open hand swipe up      Task View",
     "open hand swipe down    show desktop",
     "2 fingers down / up     scroll (gas pedal)"
@@ -2585,7 +2652,7 @@ HELP_LINES_WIN = (
     "open -> gather tips     Start menu",
     "wave (short strokes)    lock screen; again to wake",
     "rock horns (hold)       pause / resume gestures",
-    "key t: test desktop switch (no gesture)",
+    "key t: test window switch (no gesture)",
 )
 HELP_LINES = HELP_LINES_WIN if OS_NAME == "Windows" else HELP_LINES_MAC
 
@@ -2604,7 +2671,7 @@ ACTION_LABELS_MAC = {
     "click": "CLICK", "mouse_down": "DRAG", "mouse_up": "DROP",
 }
 ACTION_LABELS_WIN = {
-    "space_left": "DESKTOP <-", "space_right": "DESKTOP ->",
+    "space_left": "WINDOW <-", "space_right": "WINDOW ->",
     "overview": "TASK VIEW", "app_windows": "SHOW DESKTOP",
     "close_overview": "CLOSE TASK VIEW", "back": "BACK", "forward": "FORWARD",
     "launcher": "START MENU", "lock": "LOCK SCREEN", "wake": "WAKE SCREEN", "volume_up": "VOLUME +", "volume_down": "VOLUME -",

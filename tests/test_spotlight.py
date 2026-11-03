@@ -185,6 +185,7 @@ def test_launcher_on_mac_goes_through_shortcuts_tap():
         d = core.Dispatcher.__new__(core.Dispatcher)
         d.pag = FakePag()
         d.quartz, d.appkit = object(), None
+        d.alt_tab = None
         d.bindings = core.KEY_BINDINGS["Darwin"]
         d._do("launcher", 1)
     finally:
@@ -203,6 +204,7 @@ def test_launcher_on_windows_still_uses_hotkey():
         d = core.Dispatcher.__new__(core.Dispatcher)
         d.pag = FakePag()
         d.quartz = d.appkit = None
+        d.alt_tab = None
         d.bindings = core.KEY_BINDINGS["Windows"]
         d._do("launcher", 1)
     finally:
