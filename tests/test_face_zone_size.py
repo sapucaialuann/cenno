@@ -60,6 +60,7 @@ def test_swipe_up_into_face_is_blocked():
     # A swipe straight up ending right over the face (x=320, cy=170) is
     # indistinguishable from reaching to touch the face and must stay blocked.
     eng, log = core.GestureEngine(), []
+    eng.face_zone = True
     swipe_up(eng, log, cx=320.0, face=FACE_BOX)
     fired = names(log)
     assert not fired, f"expected no gestures, got {fired}"
@@ -74,6 +75,7 @@ def test_slap_below_face_fires_space_left():
 
 def test_face_scratching_strokes_fire_nothing():
     eng, log = core.GestureEngine(), []
+    eng.face_zone = True
     t = 0.0
     # Horizontal scratching strokes over the face (cy around 160)
     for _ in range(5):
@@ -95,6 +97,7 @@ def test_face_scratching_strokes_fire_nothing():
 
 def test_chin_resting_wiggling_fires_nothing():
     eng, log = core.GestureEngine(), []
+    eng.face_zone = True
     t = 0.0
     # Two-finger hand held at chin (bottom of face box is y=250; hand at cy=200 has fingers in face)
     while t < 0.5:

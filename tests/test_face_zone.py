@@ -237,6 +237,7 @@ def test_thumb_left_at_the_face_fires_arrow():
 
 def test_slow_move_at_the_face_does_not_switch_spaces():
     eng, log = core.GestureEngine(), []
+    eng.face_zone = True
     sweep(eng, log, open_hand, FACE_BOX, seconds=1.2, dx=120.0)
     assert not [n for n in names(log) if n.startswith("space_")], log
     assert "lock" not in names(log), log
@@ -272,6 +273,7 @@ def wave(engine, log, face, seconds=1.4, cx=320.0, cy=300.0, t=0.0):
 
 def test_wave_at_the_face_does_not_lock():
     eng, log = core.GestureEngine(), []
+    eng.face_zone = True
     wave(eng, log, FACE_BOX)
     assert "lock" not in names(log), log
 
@@ -286,6 +288,7 @@ def test_wave_without_a_face_locks():
 
 def test_sweep_right_after_leaving_the_face_fires():
     eng, log = core.GestureEngine(), []
+    eng.face_zone = True
     t = sweep(eng, log, open_hand, FACE_BOX, seconds=1.2, dx=120.0)  # slow: nothing
     assert not [n for n in names(log) if n.startswith("space_")], log
     sweep(eng, log, open_hand, None, t=t)        # same sweep, no face
@@ -297,6 +300,7 @@ def test_sweep_right_after_leaving_the_face_fires():
 
 def test_two_finger_stroke_at_the_face_does_not_scroll():
     eng, log = core.GestureEngine(), []
+    eng.face_zone = True
     vertical_stroke(eng, log, two_hand, FACE_BOX)
     assert "scroll_drag" not in names(log), log
     assert "scroll_fling" not in names(log), log
@@ -333,6 +337,7 @@ def pinch_hand(cy=300):
 def test_pinch_at_the_face_does_not_click():
     """Scratching the face can look like a pinch: no click there (#9)."""
     eng, log = core.GestureEngine(), []
+    eng.face_zone = True
     t = run(eng, point_hand(), 0.3, 0.0, log, face=FACE_BOX)
     t = run(eng, pinch_hand(), 0.2, t, log, face=FACE_BOX)
     run(eng, point_hand(), 0.3, t, log, face=FACE_BOX)
@@ -349,6 +354,7 @@ def test_pinch_on_the_mouth_does_not_click():
     face = (200.0, 40.0, 440.0, tip_y + 20)
     assert not core.near_face(hand_pinch, face)
     eng, log = core.GestureEngine(), []
+    eng.face_zone = True
     t = run(eng, hand_point, 0.3, 0.0, log, face=face)
     t = run(eng, hand_pinch, 0.2, t, log, face=face)
     run(eng, hand_point, 0.3, t, log, face=face)
@@ -381,6 +387,7 @@ def test_pointer_continues_when_the_hand_reaches_the_face():
 
 def test_near_face_flag_and_debug():
     eng = core.GestureEngine()
+    eng.face_zone = True
     eng.update(open_hand(), 640, 480, 0.0, face=FACE_BOX)
     assert eng.near_face is True
     assert eng.debug["face"] is True

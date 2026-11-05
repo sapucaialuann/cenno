@@ -50,7 +50,8 @@ DEFAULT_SETTINGS = {"settings_version": 2,
                     "dictation_ptt": None,
                     "display_mode": "current",
                     "pointer_mode": core.POINTER_MODE,
-                    "scroll_mode": core.SCROLL_MODE}
+                    "scroll_mode": core.SCROLL_MODE,
+                    "face_zone": core.FACE_ZONE_DEFAULT}
 WISPR_APP = "/Applications/Wispr Flow.app"
 DISPLAY_MODES = (("current", "Current display"),
                  ("all", "All displays"))
@@ -619,6 +620,10 @@ class CennoApp(rumps.App):
             self.preview_menu.add(item)
             self.size_items[key] = item
         self.mouse_item = rumps.MenuItem("Mouse control (point + pinch)", callback=self.toggle_mouse)
+        # On, the hand in front of the face is ignored: no click, no scroll
+        # and no swipe there (#43).
+        self.face_zone_item = rumps.MenuItem("Ignore touches on the face",
+                                             callback=self.toggle_face_zone)
         self.displays_menu = None
         self.display_items = {}
         if self.tracker.displays_count > 1:
@@ -696,7 +701,7 @@ class CennoApp(rumps.App):
     def _build_menu(self):
         menu = [self.status_item, self.ax_item, None, self.enabled_item,
                 self.pause_item, self.preview_menu, self.mouse_item,
-                self.pointer_menu, self.scroll_menu]
+                self.face_zone_item, self.pointer_menu, self.scroll_menu]
         if self.displays_menu is not None:
             menu.append(self.displays_menu)
         menu += [self.dictation_menu, None, self.gestures_menu, self.perms_menu,
@@ -737,9 +742,11 @@ class CennoApp(rumps.App):
         for key, item in self.size_items.items():
             item.state = int(self.settings["preview_size"] == key)
         self.mouse_item.state = int(self.settings["mouse"])
+        self.face_zone_item.state = int(self.settings["face_zone"])
         engine = self.tracker.engine
         engine.pointer_mode = self.settings["pointer_mode"]
         engine.scroll_mode = self.settings["scroll_mode"]
+        engine.face_zone = self.settings["face_zone"]
         for key, item in self.pointer_items.items():
             item.state = int(engine.pointer_mode == key)
         for key, item in self.scroll_items.items():
@@ -1052,6 +1059,13 @@ class CennoApp(rumps.App):
         self.settings["mouse"] = not self.settings["mouse"]
         if not self.settings["mouse"]:
             self.tracker.dispatcher.submit("pointer_end", None)
+        save_settings(self.settings)
+        self._sync_checks()
+
+    def toggle_face_zone(self, _):
+        """Turn the face zone on or off (#43): on, the hand in front of the
+        face is ignored; off, the face never blocks anything."""
+        self.settings["face_zone"] = not self.settings["face_zone"]
         save_settings(self.settings)
         self._sync_checks()
 

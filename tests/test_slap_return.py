@@ -154,6 +154,7 @@ def test_slow_movement_at_the_face_does_nothing():
     """Scratching your face looks like a swipe, so slow movement there is
     still ignored."""
     eng, log = core.GestureEngine(), []
+    eng.face_zone = True
     t = 0.0
     t = hold(eng, 320.0, 300.0, 0.4, t, log, face=FACE_BOX)
     t = stroke(eng, 200.0, 440.0, 1.2, t, log, face=FACE_BOX)
