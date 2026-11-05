@@ -43,21 +43,19 @@ def test_advance_walks_the_steps():
     assert ob.step == "done"
 
 
-def test_skip_records_the_step():
+def test_skip_leaves_the_step():
     ob = onboarding.Onboarding("windows")
     ob.skip()
     assert ob.step == "camera"
-    assert ob.skipped == ["welcome"]
     ob.skip()
     assert ob.step == "first_win"
-    assert ob.skipped == ["welcome", "camera"]
 
 
-def test_skip_all_finishes_and_records_the_rest():
+def test_skip_all_finishes_the_tour():
     ob = onboarding.Onboarding("macos")
     ob.skip_all()
     assert ob.finished
-    assert ob.skipped == onboarding.STEPS_MACOS
+    assert ob.step == "done"
 
 
 def test_first_win_completes_on_a_slap():
@@ -76,9 +74,27 @@ def test_first_win_on_windows_uses_the_same_event():
     assert ob.on_event("space_right") is True
 
 
-def test_pause_needs_two_toggles():
+def test_pause_needs_a_pause_and_then_a_resume():
     ob = onboarding.Onboarding("macos")
     walk_to(ob, "pause")
+    assert ob.on_event("pause_on") is False
+    assert ob.on_event("pause_off") is True
+
+
+def test_pause_does_not_finish_with_cenno_paused():
+    # The step ends on a resume, so the tour cannot leave Cenno paused.
+    ob = onboarding.Onboarding("macos")
+    walk_to(ob, "pause")
+    assert ob.on_event("pause_off") is False
+    assert ob.on_event("pause_on") is False
+
+
+def test_pause_that_started_paused_needs_a_pause_first():
+    # Cenno was paused before the step, so the first horns gesture only
+    # resumes it: the step is not done until the user paused it again.
+    ob = onboarding.Onboarding("macos")
+    walk_to(ob, "pause")
+    assert ob.on_event("pause_off") is False
     assert ob.on_event("pause_on") is False
     assert ob.on_event("pause_off") is True
 
@@ -160,35 +176,76 @@ def test_mark_onboarding_done():
     assert onboarding.needs_onboarding(settings, False) is False
 
 
-def test_record_gesture_used_dedupes():
-    settings = {}
-    onboarding.record_gesture_used(settings, "scroll")
-    onboarding.record_gesture_used(settings, "scroll")
-    assert settings["gestures_used"] == ["scroll"]
-    onboarding.record_gesture_used(settings, "pointer")
-    assert settings["gestures_used"] == ["scroll", "pointer"]
-
-
-def test_next_gesture_to_teach():
-    settings = {}
-    assert onboarding.next_gesture_to_teach(settings) == onboarding.TEACH_ORDER[0]
-    onboarding.record_gesture_used(settings, onboarding.TEACH_ORDER[0])
-    assert onboarding.next_gesture_to_teach(settings) == onboarding.TEACH_ORDER[1]
-    for name in onboarding.TEACH_ORDER:
-        onboarding.record_gesture_used(settings, name)
-    assert onboarding.next_gesture_to_teach(settings) is None
-
-
-def test_teach_order_leaves_the_lock_wave_out():
-    assert "wave" not in onboarding.TEACH_ORDER
-    assert "lock" not in onboarding.TEACH_ORDER
-
-
 def test_hints_exist_for_every_gesture_step():
     assert onboarding.HINTS["first_win"]
     assert onboarding.HINTS["pause"]
     for choice in onboarding.SECOND_GESTURE_CHOICES:
         assert onboarding.HINTS["second_gesture"][choice]
+
+
+def test_hint_for_the_gesture_steps():
+    assert onboarding.hint_for("first_win") == onboarding.HINTS["first_win"]
+    assert onboarding.hint_for("pause") == onboarding.HINTS["pause"]
+    for choice in onboarding.SECOND_GESTURE_CHOICES:
+        hint = onboarding.hint_for("second_gesture", choice)
+        assert hint == onboarding.HINTS["second_gesture"][choice]
+
+
+def test_no_hint_for_the_other_steps():
+    assert onboarding.hint_for("welcome") == ""
+    assert onboarding.hint_for("camera") == ""
+    assert onboarding.hint_for("second_gesture") == ""
+
+
+def test_the_gesture_steps_are_the_ones_that_wait_for_a_gesture():
+    assert onboarding.GESTURE_STEPS == ("first_win", "pause", "second_gesture")
+    for step in onboarding.GESTURE_STEPS:
+        assert onboarding.STEP_DONE.get(step) or step == "first_win"
+
+
+def test_the_second_gesture_buttons_are_choices_the_tour_knows():
+    keys = [key for key, _label in onboarding.SECOND_CHOICES]
+    assert keys == list(onboarding.SECOND_GESTURE_CHOICES)
+    ob = onboarding.Onboarding("macos")
+    for key in keys:
+        assert ob.choose_second(key) is True
+
+
+def test_the_tour_watches_every_gesture_group():
+    for name in onboarding.SPACE_EVENTS + onboarding.PAUSE_EVENTS + \
+            onboarding.SCROLL_EVENTS + onboarding.PINCH_EVENTS:
+        assert name in onboarding.ONBOARDING_EVENTS
+    assert onboarding.EVENT_PLAY_PAUSE in onboarding.ONBOARDING_EVENTS
+
+
+def test_the_hand_timer_waits_for_the_whole_time():
+    timer = onboarding.HandTimer(4.0)
+    assert timer.reached(100.0, True) is False     # the hand just arrived
+    assert timer.reached(101.0, True) is False     # not long enough yet
+    assert timer.reached(104.0, True) is True      # long enough now
+
+
+def test_the_hand_timer_starts_over_when_the_hand_leaves():
+    timer = onboarding.HandTimer(4.0)
+    timer.reached(100.0, True)
+    assert timer.reached(103.0, False) is False    # the hand left
+    assert timer.reached(104.0, True) is False     # the count starts again
+    assert timer.reached(108.0, True) is True
+
+
+def test_the_hand_timer_counts_again_after_a_miss():
+    timer = onboarding.HandTimer(4.0)
+    timer.reached(100.0, True)
+    assert timer.reached(104.0, True) is True
+    assert timer.reached(105.0, True) is False     # the count starts again
+    assert timer.reached(108.0, True) is True
+
+
+def test_the_hand_timer_forgets_the_hand_on_reset():
+    timer = onboarding.HandTimer(4.0)
+    timer.reached(100.0, True)
+    timer.reset()
+    assert timer.reached(104.0, True) is False
 
 
 if __name__ == "__main__":

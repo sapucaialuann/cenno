@@ -41,20 +41,6 @@ def test_space_shortcuts_on_when_enabled():
     assert onboarding_mac.space_shortcuts_off(hotkeys) == []
 
 
-def test_hint_for_the_gesture_steps():
-    assert onboarding_mac.hint_for("first_win") == onboarding.HINTS["first_win"]
-    assert onboarding_mac.hint_for("pause") == onboarding.HINTS["pause"]
-    for choice in onboarding.SECOND_GESTURE_CHOICES:
-        hint = onboarding_mac.hint_for("second_gesture", choice)
-        assert hint == onboarding.HINTS["second_gesture"][choice]
-
-
-def test_no_hint_for_the_other_steps():
-    assert onboarding_mac.hint_for("welcome") == ""
-    assert onboarding_mac.hint_for("camera") == ""
-    assert onboarding_mac.hint_for("second_gesture") == ""
-
-
 def test_the_accessibility_step_moves_on_when_all_is_ready():
     # Access granted and the Mission Control shortcuts on: the step can
     # move on by itself.
@@ -79,12 +65,10 @@ def test_every_step_has_a_title_and_a_body():
         assert onboarding_mac.STEP_BODY[step]
 
 
-def test_the_second_gesture_buttons_are_choices_the_tour_knows():
-    keys = [key for key, _label in onboarding_mac.SECOND_CHOICES]
-    assert keys == list(onboarding.SECOND_GESTURE_CHOICES)
-    ob = onboarding.Onboarding("macos")
-    for key in keys:
-        assert ob.choose_second(key) is True
+def test_the_mac_says_its_own_line_for_the_first_gesture():
+    # The Mac moves between Spaces, the PC between windows.
+    assert "Mac" in onboarding_mac.STEP_DONE["first_win"]
+    assert "PC" not in onboarding_mac.STEP_DONE["first_win"]
 
 
 if __name__ == "__main__":

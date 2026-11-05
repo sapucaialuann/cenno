@@ -27,26 +27,12 @@ PAD = theme.SPACE[4]              # 16 from the edge to the text
 BTN_H = 30                        # button height
 PREVIEW_W, PREVIEW_H = 280, 210   # the camera preview inside the window
 
-# A hand on camera this long without the gesture counts as a missed try.
-MISS_AFTER_TRACKED_S = 4.0
-
-# The camera step moves on once the hand has been seen this long.
-HAND_SEEN_S = 2.0
-
 # How long the check mark stays up before the step moves on.
 AX_CHECK_DELAY_S = 1.0
 
 # How often the Mission Control shortcuts are read again.  Reading them
-# runs `defaults`, so it does not happen on every tick.
+# goes through the system preferences, so it does not happen on every tick.
 SPACE_SHORTCUTS_READ_S = 2.0
-
-# The steps that wait for a gesture.
-GESTURE_STEPS = ("first_win", "pause", "second_gesture")
-
-# The second gesture the user can pick: the key, then the button text.
-SECOND_CHOICES = (("scroll", "Scroll"),
-                  ("pointer", "Pointer + pinch"),
-                  ("play_pause", "Play / pause"))
 
 # =============================================================================
 # The text of the steps
@@ -75,11 +61,11 @@ STEP_BODY = {
     "done": "You know 3 gestures. The rest are in the menu under Gestures.",
 }
 
-# What the step says once the gesture worked.
+# What the step says once the gesture worked.  The shared lines live in
+# onboarding.py, so both apps say the same thing.
 STEP_DONE = {
     "first_win": "Your Mac moved to the next Space. That is the whole idea.",
-    "pause": "You can stop Cenno any time now.",
-    "second_gesture": "One more gesture is yours.",
+    **onboarding.STEP_DONE,
 }
 
 # Why the Mission Control shortcuts matter, when they are off.
@@ -105,13 +91,6 @@ def space_shortcuts_off(hotkeys):
         if hasattr(entry, "get") and not entry.get("enabled", True):
             off.append(name)
     return off
-
-
-def hint_for(step, choice=None):
-    """The one hint for a step, or "" when the step has none."""
-    if step == "second_gesture":
-        return onboarding.HINTS["second_gesture"].get(choice, "")
-    return onboarding.HINTS.get(step, "")
 
 
 def should_leave_accessibility(granted, shortcuts_off):
@@ -163,8 +142,10 @@ def _controller_class():
             def do_open_mc_(self, sender):
                 self._cenno_owner.open_keyboard_shortcuts()
 
-            def windowWillClose_(self, notification):
+            def windowShouldClose_(self, notification):
+                # The window is only hidden, so the tour can open again.
                 self._cenno_owner.window_closed()
+                return False
 
         _CONTROLLER_CLASS = OnboardingController
     return _CONTROLLER_CLASS
@@ -187,10 +168,11 @@ class OnboardingWindow:
         self.host = host
         self.ob = onboarding.Onboarding("macos")
         self.succeeded = False
+        self.running = False         # the tour is on screen and being driven
+        self.timer = onboarding.HandTimer(onboarding.HAND_SEEN_S)
+        self.miss_timer = onboarding.HandTimer(onboarding.MISS_AFTER_TRACKED_S)
         self._rows = []             # (view, height) shown under the body text
         self._dark = bool(getattr(host, "dark", False))
-        self._tracked_since = None  # when the hand came on camera
-        self._seen_since = None     # when the hand was first seen
         self._ax_granted_at = None  # when the permission came
         self._mc_off = []
         self._shortcuts_read_at = None
@@ -229,7 +211,7 @@ class OnboardingWindow:
 
         self.choice_row = AK.NSView.alloc().initWithFrame_((0, 0, WINDOW_W, BTN_H))
         self.choice_buttons = []
-        for tag, (_key, label) in enumerate(SECOND_CHOICES):
+        for tag, (_key, label) in enumerate(onboarding.SECOND_CHOICES):
             button = self._button(label, "do_choice:")
             button.setTag_(tag)
             self.choice_row.addSubview_(button)
@@ -319,8 +301,8 @@ class OnboardingWindow:
         """Put a step on screen."""
         self.succeeded = False
         self._rows = []
-        self._tracked_since = None
-        self._seen_since = None
+        self.timer.reset()
+        self.miss_timer.reset()
         self._ax_granted_at = None
         self._mc_off = []
         self._shortcuts_read_at = None
@@ -349,10 +331,11 @@ class OnboardingWindow:
             self._show(self.check)
             self._rows.append((self.ax_button, BTN_H))
             self._show(self.ax_button)
-        elif step in GESTURE_STEPS:
+        elif step in onboarding.GESTURE_STEPS:
             if step == "second_gesture":
                 self._rows.append((self.choice_row, BTN_H))
                 self._show(self.choice_row)
+                self._reset_choices()
             self._rows.append((self.hint_label, 20))
         elif step == "done":
             self.primary.setTitle_("Close")
@@ -450,12 +433,17 @@ class OnboardingWindow:
 
     def choice_pressed(self, tag):
         """The user picked the second gesture to try."""
-        key = SECOND_CHOICES[tag][0]
+        key = onboarding.SECOND_CHOICES[tag][0]
         if not self.ob.choose_second(key):
             return
-        for index, (choice, label) in enumerate(SECOND_CHOICES):
+        for index, (choice, label) in enumerate(onboarding.SECOND_CHOICES):
             self.choice_buttons[index].setTitle_(("✓ " if choice == key else "") + label)
-        self.show_hint(hint_for("second_gesture", key))
+        self.show_hint(onboarding.hint_for("second_gesture", key))
+
+    def _reset_choices(self):
+        """The second gesture is picked again in every new tour."""
+        for index, (_key, label) in enumerate(onboarding.SECOND_CHOICES):
+            self.choice_buttons[index].setTitle_(label)
 
     def open_accessibility(self):
         """Send the user to the Accessibility pane."""
@@ -466,8 +454,11 @@ class OnboardingWindow:
         self.host.open_keyboard_shortcuts()
 
     def window_closed(self):
-        """The window was closed: remember that the tour is over."""
-        self.finish(close=False)
+        """The window was closed: remember that the tour is over.
+
+        The window is only hidden, so the tour can open again later.
+        """
+        self.finish()
 
     # --- moving on ---
 
@@ -479,28 +470,32 @@ class OnboardingWindow:
         self.ob.advance()
         self.show_step(self.ob.step)
 
-    def finish(self, close=True):
-        """The tour is over: remember it and close the window."""
+    def finish(self):
+        """The tour is over: remember it and hide the window."""
         onboarding.mark_onboarding_done(self.host.settings)
         self.host.persist_settings()
         self.host.tracker.onboarding_preview = False
-        if close:
-            self.window.orderOut_(None)
+        self.running = False
+        self.window.orderOut_(None)
 
     def show(self):
         """Bring the window on screen."""
+        self.running = True
         self.AK.NSApp.activateIgnoringOtherApps_(True)
         self.window.makeKeyAndOrderFront_(None)
 
     def restart(self):
         """Start the tour again from the first step."""
         self.ob = onboarding.Onboarding("macos")
+        self._reset_choices()
         self.show_step(self.ob.step)
 
     # --- what happens while the window is open ---
 
     def tick(self):
         """Called from the app's timer, on the main thread."""
+        if not self.running:
+            return
         if self.host.dark is not None and bool(self.host.dark) != self._dark:
             self.apply_theme(bool(self.host.dark))
             self._layout()
@@ -510,11 +505,13 @@ class OnboardingWindow:
             self._update_camera()
         elif step == "accessibility":
             self._update_accessibility()
-        elif step in GESTURE_STEPS:
+        elif step in onboarding.GESTURE_STEPS:
             self._update_misses()
 
     def on_event(self, name):
         """An engine event: it completes the step when it is the right one."""
+        if not self.running:
+            return
         if self.ob.on_event(name):
             self.step_succeeded()
 
@@ -549,13 +546,7 @@ class OnboardingWindow:
     def _update_camera(self):
         """Move on once the camera has seen a hand."""
         now = time.monotonic()
-        if not self.host.tracker.hand_tracked:
-            self._seen_since = None
-            return
-        if self._seen_since is None:
-            self._seen_since = now
-            return
-        if now - self._seen_since >= HAND_SEEN_S:
+        if self.timer.reached(now, self.host.tracker.hand_tracked):
             self.advance()
 
     def _update_accessibility(self):
@@ -609,14 +600,7 @@ class OnboardingWindow:
         if self.succeeded:
             return
         now = time.monotonic()
-        if not self.host.tracker.hand_tracked:
-            self._tracked_since = None
+        if not self.miss_timer.reached(now, self.host.tracker.hand_tracked):
             return
-        if self._tracked_since is None:
-            self._tracked_since = now
-            return
-        if now - self._tracked_since < MISS_AFTER_TRACKED_S:
-            return
-        self._tracked_since = now
         if self.ob.note_miss():
-            self.show_hint(hint_for(self.ob.step, self.ob.second_gesture))
+            self.show_hint(onboarding.hint_for(self.ob.step, self.ob.second_gesture))

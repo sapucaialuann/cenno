@@ -115,11 +115,6 @@ CORNERS = (
 POINTER_EVENTS = ("pointer_move", "pointer_end", "click", "mouse_down", "mouse_up")
 STARTUP_REG_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 
-# The engine events the welcome tour listens to (the groups in onboarding.py).
-ONBOARDING_EVENTS = frozenset(onboarding.SPACE_EVENTS + onboarding.PAUSE_EVENTS
-                               + onboarding.SCROLL_EVENTS + onboarding.PINCH_EVENTS
-                               + (onboarding.EVENT_PLAY_PAUSE,))
-
 
 def gesture_lines():
     """Menu list in the 'Gesture · Action' pattern, in Windows words."""
@@ -488,13 +483,13 @@ class Tracker(threading.Thread):
                 events = self.dispatcher.while_locked(events, now)
 
                 for name, n in events:
+                    if name in onboarding.ONBOARDING_EVENTS:
+                        # The tour watches the same events, also the ones
+                        # the mouse setting switches off.
+                        self.onboarding_events.put(name)
                     if name in POINTER_EVENTS and not self.settings["mouse"]:
                         continue
                     self.dispatcher.submit(name, n)
-                    if name in ONBOARDING_EVENTS:
-                        # The tour watches the same events; they still do
-                        # their real job.
-                        self.onboarding_events.put(name)
                     if name in ("pointer_move", "pointer_end", "scroll_drag"):
                         continue
                     label = core.ACTION_LABELS.get(name, name)

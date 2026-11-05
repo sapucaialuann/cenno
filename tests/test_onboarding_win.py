@@ -12,20 +12,6 @@ import onboarding                       # noqa: E402
 import onboarding_win                   # noqa: E402
 
 
-def test_hint_for_the_gesture_steps():
-    assert onboarding_win.hint_for("first_win") == onboarding.HINTS["first_win"]
-    assert onboarding_win.hint_for("pause") == onboarding.HINTS["pause"]
-    for choice in onboarding.SECOND_GESTURE_CHOICES:
-        hint = onboarding_win.hint_for("second_gesture", choice)
-        assert hint == onboarding.HINTS["second_gesture"][choice]
-
-
-def test_no_hint_for_the_other_steps():
-    assert onboarding_win.hint_for("welcome") == ""
-    assert onboarding_win.hint_for("camera") == ""
-    assert onboarding_win.hint_for("second_gesture") == ""
-
-
 def test_every_step_has_a_title_and_a_body():
     for step in onboarding.STEPS_WINDOWS:
         assert onboarding_win.STEP_TITLE[step]
@@ -42,18 +28,15 @@ def test_windows_has_no_accessibility_step():
     assert "accessibility" not in onboarding.STEPS_WINDOWS
 
 
-def test_the_gesture_steps_are_the_ones_that_wait_for_a_gesture():
-    assert onboarding_win.GESTURE_STEPS == ("first_win", "pause", "second_gesture")
-    for step in onboarding_win.GESTURE_STEPS:
+def test_the_gesture_steps_have_a_line_for_when_they_work():
+    for step in onboarding.GESTURE_STEPS:
         assert onboarding_win.STEP_DONE[step]
 
 
-def test_the_second_gesture_buttons_are_choices_the_tour_knows():
-    keys = [key for key, _label in onboarding_win.SECOND_CHOICES]
-    assert keys == list(onboarding.SECOND_GESTURE_CHOICES)
-    ob = onboarding.Onboarding("windows")
-    for key in keys:
-        assert ob.choose_second(key) is True
+def test_the_pc_says_its_own_line_for_the_first_gesture():
+    # The PC moves between windows, the Mac between Spaces.
+    assert "PC" in onboarding_win.STEP_DONE["first_win"]
+    assert "Mac" not in onboarding_win.STEP_DONE["first_win"]
 
 
 if __name__ == "__main__":

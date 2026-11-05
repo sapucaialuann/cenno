@@ -31,20 +31,6 @@ WINDOW_H = 440
 BTN_H = 30                        # button height
 PREVIEW_W, PREVIEW_H = 280, 210   # the camera preview inside the window
 
-# A hand on camera this long without the gesture counts as a missed try.
-MISS_AFTER_TRACKED_S = 4.0
-
-# The camera step moves on once the hand has been seen this long.
-HAND_SEEN_S = 2.0
-
-# The steps that wait for a gesture.
-GESTURE_STEPS = ("first_win", "pause", "second_gesture")
-
-# The second gesture the user can pick: the key, then the button text.
-SECOND_CHOICES = (("scroll", "Scroll"),
-                  ("pointer", "Pointer + pinch"),
-                  ("play_pause", "Play / pause"))
-
 # The buttons, by style: (background, text, hover background, hover text).
 BUTTON_STYLES = {
     "trace": ("trace", "on-trace", "trace-soft", "on-trace"),
@@ -78,23 +64,12 @@ STEP_BODY = {
     "done": "You know 3 gestures. The rest are in the menu under Gestures.",
 }
 
-# What the step says once the gesture worked.
+# What the step says once the gesture worked.  The shared lines live in
+# onboarding.py, so both apps say the same thing.
 STEP_DONE = {
     "first_win": "Your PC switched to the next window. That is the whole idea.",
-    "pause": "You can stop Cenno any time now.",
-    "second_gesture": "One more gesture is yours.",
+    **onboarding.STEP_DONE,
 }
-
-
-# =============================================================================
-# Pure helpers
-# =============================================================================
-
-def hint_for(step, choice=None):
-    """The one hint for a step, or "" when the step has none."""
-    if step == "second_gesture":
-        return onboarding.HINTS["second_gesture"].get(choice, "")
-    return onboarding.HINTS.get(step, "")
 
 
 # =============================================================================
@@ -112,9 +87,10 @@ class OnboardingWindow:
         self.host = host
         self.ob = onboarding.Onboarding("windows")
         self.succeeded = False
+        self.running = False         # the tour is on screen and being driven
+        self.timer = onboarding.HandTimer(onboarding.HAND_SEEN_S)
+        self.miss_timer = onboarding.HandTimer(onboarding.MISS_AFTER_TRACKED_S)
         self._dark = bool(getattr(host, "dark", False))
-        self._tracked_since = None  # when the hand came on camera
-        self._seen_since = None     # when the hand was first seen
         self._photo = None          # the preview picture, kept alive
         self._rows = []             # the widgets shown under the body text
         self._buttons = []          # the buttons shown in the button row
@@ -174,7 +150,7 @@ class OnboardingWindow:
         self.choice_buttons = [
             self._button(self.choice_frame, label,
                          lambda key=key: self.choice_pressed(key), "quiet")
-            for key, label in SECOND_CHOICES
+            for key, label in onboarding.SECOND_CHOICES
         ]
         for button in self.choice_buttons:
             button.pack(side=tk.LEFT, padx=(0, theme.SPACE[2]))
@@ -247,8 +223,8 @@ class OnboardingWindow:
     def show_step(self, step):
         """Put a step on screen."""
         self.succeeded = False
-        self._tracked_since = None
-        self._seen_since = None
+        self.timer.reset()
+        self.miss_timer.reset()
         self.host.tracker.onboarding_preview = (step == "camera")
         self.title_label.configure(text=STEP_TITLE.get(step, ""))
         self.body_label.configure(text=STEP_BODY.get(step, ""))
@@ -266,7 +242,7 @@ class OnboardingWindow:
             self.primary_btn.configure(text="Continue")
             self._buttons.append(self.primary_btn)
             self._rows.append(self.preview)
-        elif step in GESTURE_STEPS:
+        elif step in onboarding.GESTURE_STEPS:
             if step == "second_gesture":
                 self._rows.append(self.choice_frame)
                 self._reset_choices()
@@ -322,13 +298,13 @@ class OnboardingWindow:
         """The user picked the second gesture to try."""
         if not self.ob.choose_second(key):
             return
-        for button, (choice, label) in zip(self.choice_buttons, SECOND_CHOICES):
+        for button, (choice, label) in zip(self.choice_buttons, onboarding.SECOND_CHOICES):
             button.configure(text=("✓ " if choice == key else "") + label)
-        self.show_hint(hint_for("second_gesture", key))
+        self.show_hint(onboarding.hint_for("second_gesture", key))
 
     def _reset_choices(self):
         """The second gesture is picked again in every new tour."""
-        for button, (_key, label) in zip(self.choice_buttons, SECOND_CHOICES):
+        for button, (_key, label) in zip(self.choice_buttons, onboarding.SECOND_CHOICES):
             button.configure(text=label)
 
     def _on_close(self):
@@ -350,10 +326,12 @@ class OnboardingWindow:
         onboarding.mark_onboarding_done(self.host.settings)
         self.host.persist_settings()
         self.host.tracker.onboarding_preview = False
+        self.running = False
         self.window.withdraw()
 
     def show(self):
         """Bring the window on screen."""
+        self.running = True
         self.window.deiconify()
         self.window.lift()
         self.window.focus_force()
@@ -361,12 +339,15 @@ class OnboardingWindow:
     def restart(self):
         """Start the tour again from the first step."""
         self.ob = onboarding.Onboarding("windows")
+        self._reset_choices()
         self.show_step(self.ob.step)
 
     # --- what happens while the window is open ---
 
     def tick(self):
         """Called from the app's timer, on the main thread."""
+        if not self.running:
+            return
         if self.host.dark is not None and bool(self.host.dark) != self._dark:
             self.apply_theme(bool(self.host.dark))
 
@@ -374,11 +355,13 @@ class OnboardingWindow:
         if step == "camera":
             self._update_preview()
             self._update_camera()
-        elif step in GESTURE_STEPS:
+        elif step in onboarding.GESTURE_STEPS:
             self._update_misses()
 
     def on_event(self, name):
         """An engine event: it completes the step when it is the right one."""
+        if not self.running:
+            return
         if self.ob.on_event(name):
             self.step_succeeded()
 
@@ -417,13 +400,7 @@ class OnboardingWindow:
     def _update_camera(self):
         """Move on once the camera has seen a hand."""
         now = time.monotonic()
-        if not self.host.tracker.hand_tracked:
-            self._seen_since = None
-            return
-        if self._seen_since is None:
-            self._seen_since = now
-            return
-        if now - self._seen_since >= HAND_SEEN_S:
+        if self.timer.reached(now, self.host.tracker.hand_tracked):
             self.advance()
 
     def _update_misses(self):
@@ -431,14 +408,7 @@ class OnboardingWindow:
         if self.succeeded:
             return
         now = time.monotonic()
-        if not self.host.tracker.hand_tracked:
-            self._tracked_since = None
+        if not self.miss_timer.reached(now, self.host.tracker.hand_tracked):
             return
-        if self._tracked_since is None:
-            self._tracked_since = now
-            return
-        if now - self._tracked_since < MISS_AFTER_TRACKED_S:
-            return
-        self._tracked_since = now
         if self.ob.note_miss():
-            self.show_hint(hint_for(self.ob.step, self.ob.second_gesture))
+            self.show_hint(onboarding.hint_for(self.ob.step, self.ob.second_gesture))

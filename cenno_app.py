@@ -99,11 +99,6 @@ CORNERS = (("top_right", "Top right (default)"), ("top_left", "Top left"),
 POINTER_EVENTS = ("pointer_move", "pointer_end", "click", "mouse_down", "mouse_up",
                   "display_step")
 
-# The engine events the welcome tour listens to (the groups in onboarding.py).
-ONBOARDING_EVENTS = frozenset(onboarding.SPACE_EVENTS + onboarding.PAUSE_EVENTS
-                               + onboarding.SCROLL_EVENTS + onboarding.PINCH_EVENTS
-                               + (onboarding.EVENT_PLAY_PAUSE,))
-
 
 # =============================================================================
 # Logging (an app has no Terminal: send prints to a log file)
@@ -334,13 +329,13 @@ class Tracker(threading.Thread):
                 events = self.dispatcher.while_locked(events, now)
 
                 for name, n in events:
+                    if name in onboarding.ONBOARDING_EVENTS:
+                        # The tour watches the same events, also the ones
+                        # the mouse setting switches off.
+                        self.onboarding_events.put(name)
                     if name in POINTER_EVENTS and not self.settings["mouse"]:
                         continue
                     self.dispatcher.submit(name, n)
-                    if name in ONBOARDING_EVENTS:
-                        # The tour watches the same events; they still do
-                        # their real job.
-                        self.onboarding_events.put(name)
                     if name in ("pointer_move", "pointer_end", "scroll_drag"):
                         continue
                     label = core.ACTION_LABELS.get(name, name)
@@ -838,11 +833,14 @@ class CennoApp(rumps.App):
             if self.preview:
                 self.preview.apply_theme(dark)
         if self.ax_ok is None:
-            # First tick: ask macOS (shows its own prompt if it can) and,
-            # if still not allowed, explain and offer to open the settings.
-            self.ax_ok = accessibility_trusted(prompt=True)
+            # First tick: ask macOS.  While the welcome tour is up, its
+            # Accessibility step asks for the permission itself, so there
+            # is no system prompt and no blocking alert here.
+            tour = self.tour_pending or (self.onboarding_window is not None
+                                         and self.onboarding_window.running)
+            self.ax_ok = accessibility_trusted(prompt=not tour)
             print(f"accessibility trusted at start: {self.ax_ok}")
-            if not self.ax_ok:
+            if not self.ax_ok and not tour:
                 self.fix_accessibility(None)
         else:
             ok = accessibility_trusted()
@@ -974,7 +972,11 @@ class CennoApp(rumps.App):
 
     def accessibility_granted(self):
         """True when macOS lets Cenno press keys and move the mouse."""
-        return accessibility_trusted()
+        return bool(self.ax_ok)
+
+    def request_accessibility(self):
+        """Ask macOS for the Accessibility permission (its own prompt)."""
+        accessibility_trusted(prompt=True)
 
     def open_accessibility_settings(self):
         """Open the Accessibility pane of System Settings."""

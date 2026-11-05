@@ -45,11 +45,18 @@ PAUSE_EVENTS = (EVENT_PAUSE_ON, EVENT_PAUSE_OFF)
 SCROLL_EVENTS = (EVENT_SCROLL_DRAG, EVENT_SCROLL_FLING)
 PINCH_EVENTS = (EVENT_CLICK, EVENT_MOUSE_DOWN)
 
-PAUSE_TOGGLES_NEEDED = 2               # pause once, then resume again
-MISSES_BEFORE_HINT = 3                 # failed tries before the one hint
+# Every event the tour listens to.
+ONBOARDING_EVENTS = frozenset(SPACE_EVENTS + PAUSE_EVENTS + SCROLL_EVENTS
+                               + PINCH_EVENTS + (EVENT_PLAY_PAUSE,))
 
-# The second gesture the user can pick to try.
-SECOND_GESTURE_CHOICES = ("scroll", "pointer", "play_pause")
+# The steps that wait for a gesture.
+GESTURE_STEPS = ("first_win", "pause", "second_gesture")
+
+# The second gesture the user can pick: the key, then the button text.
+SECOND_CHOICES = (("scroll", "Scroll"),
+                  ("pointer", "Pointer + pinch"),
+                  ("play_pause", "Play / pause"))
+SECOND_GESTURE_CHOICES = tuple(key for key, _label in SECOND_CHOICES)
 
 SECOND_GESTURE_EVENTS = {
     "scroll": SCROLL_EVENTS,
@@ -57,22 +64,99 @@ SECOND_GESTURE_EVENTS = {
     "play_pause": (EVENT_PLAY_PAUSE,),
 }
 
+MISSES_BEFORE_HINT = 3                 # failed tries before the one hint
+
+
+# =============================================================================
+# Hints and the text of a finished step
+# =============================================================================
+
+# One short hint per step with a gesture, in plain English.
+HINTS = {
+    "first_win": "Slap your open hand sideways across the camera.",
+    "pause": "Hold your rock horns sign to pause, then again to resume.",
+    "second_gesture": {
+        "scroll": "Hold two fingers together and tilt them up or down.",
+        "pointer": "Point sideways with your index, then pinch to click.",
+        "play_pause": "Hold your thumb up to play or pause the music.",
+    },
+}
+
+
+def hint_for(step, choice=None):
+    """The one hint for a step, or "" when the step has none."""
+    if step == "second_gesture":
+        return HINTS["second_gesture"].get(choice, "")
+    return HINTS.get(step, "")
+
+
+# What the step says once the gesture worked.  The first gesture moves
+# between Spaces on macOS and between windows on Windows, so that line
+# stays in the app's own file.
+STEP_DONE = {
+    "pause": "You can stop Cenno any time now.",
+    "second_gesture": "One more gesture is yours.",
+}
+
+
+# =============================================================================
+# Timing
+# =============================================================================
+
+# A hand on camera this long without the gesture counts as a missed try.
+MISS_AFTER_TRACKED_S = 4.0
+
+# The camera step moves on once the hand has been seen this long.
+HAND_SEEN_S = 2.0
+
+
+class HandTimer:
+    """How long the hand has been on camera.
+
+    The camera step moves on once the hand has been seen for HAND_SEEN_S;
+    a hand that stays up for MISS_AFTER_TRACKED_S without the gesture is a
+    missed try.  Both windows time the hand the same way.
+    """
+
+    def __init__(self, seconds):
+        self.seconds = seconds
+        self.since = None      # when the hand came on camera
+
+    def reset(self):
+        """Forget the hand: a new step starts the count again."""
+        self.since = None
+
+    def reached(self, now, hand_tracked):
+        """True when the hand has been on camera for the whole time.
+
+        The count starts again, so the next time is another `seconds`
+        later.
+        """
+        if not hand_tracked:
+            self.since = None
+            return False
+        if self.since is None:
+            self.since = now
+            return False
+        if now - self.since < self.seconds:
+            return False
+        self.since = now
+        return True
+
 
 # =============================================================================
 # The tour
 # =============================================================================
 
 class Onboarding:
-    """Which step is on screen, what completes it and what was skipped."""
+    """Which step is on screen and what completes it."""
 
     def __init__(self, os_name):
-        self.os_name = os_name
         self.steps = steps_for(os_name)
         self.index = 0
-        self.skipped = []
         self.second_gesture = None
         self._misses = 0
-        self._pause_toggles = 0
+        self._paused = False
         self._step_done = False
 
     @property
@@ -98,14 +182,12 @@ class Onboarding:
         """Leave the current step without doing it."""
         if self.finished:
             return
-        self.skipped.append(self.step)
         self.advance()
 
     def skip_all(self):
-        """Leave the whole tour; every step left over counts as skipped."""
-        while not self.finished:
-            self.skipped.append(self.step)
-            self.advance()
+        """Leave the whole tour."""
+        self.index = len(self.steps)
+        self._reset_step_state()
 
     def choose_second(self, gesture):
         """Pick the second gesture to try.  False for an unknown gesture."""
@@ -124,19 +206,28 @@ class Onboarding:
                 return True
             return False
         if self.step == "pause":
-            if name not in PAUSE_EVENTS:
-                return False
-            self._pause_toggles += 1
-            if self._pause_toggles >= PAUSE_TOGGLES_NEEDED:
-                self._step_done = True
-                return True
-            return False
+            return self._on_pause_event(name)
         if self.step == "second_gesture":
             events = SECOND_GESTURE_EVENTS.get(self.second_gesture)
             if events and name in events:
                 self._step_done = True
                 return True
         return False
+
+    def _on_pause_event(self, name):
+        """The pause step ends when the user has paused and then resumed."""
+        if name == EVENT_PAUSE_ON:
+            self._paused = True
+            return False
+        if name != EVENT_PAUSE_OFF:
+            return False
+        if not self._paused:
+            # Cenno was paused before this step, so the user has not
+            # paused it yet: the step is not done.
+            return False
+        self._paused = False
+        self._step_done = True
+        return True
 
     def note_miss(self):
         """Count a failed try.  True on the miss that should show the hint."""
@@ -149,43 +240,8 @@ class Onboarding:
     def _reset_step_state(self):
         """Per-step counters belong to the step that just ended."""
         self._misses = 0
-        self._pause_toggles = 0
+        self._paused = False
         self._step_done = False
-
-
-# =============================================================================
-# Teaching order and hints
-# =============================================================================
-
-# The README gesture table, in order.  The lock-screen wave is left out: it
-# is not something a new user should be taught to do on purpose.
-TEACH_ORDER = [
-    "space",           # slap: switch Space (Alt+Tab on Windows)
-    "overview",        # swipe up: Mission Control / Task View
-    "scroll",          # two fingers: scroll
-    "back_forward",    # two-finger swipe: back / forward
-    "pointer",         # point sideways: move the cursor
-    "click",           # pinch: click
-    "volume",          # OK sign + twist: volume
-    "play_pause",      # thumbs up: play / pause
-    "undo",            # thumbs down: undo
-    "arrow",           # thumb left / right: arrow keys
-    "dictation",       # hang loose: dictation on / off
-    "push_to_talk",    # hang loose by the ear: push to talk
-    "launcher",        # gather fingertips: Spotlight / Start menu
-    "pause",           # rock horns: pause / resume
-]
-
-# One short hint per step with a gesture, in plain English.
-HINTS = {
-    "first_win": "Slap your open hand sideways across the camera.",
-    "pause": "Hold your rock horns sign to pause, then again to resume.",
-    "second_gesture": {
-        "scroll": "Hold two fingers together and tilt them up or down.",
-        "pointer": "Point sideways with your index, then pinch to click.",
-        "play_pause": "Hold your thumb up to play or pause the music.",
-    },
-}
 
 
 # =============================================================================
@@ -209,20 +265,3 @@ def mark_onboarding_done(settings):
     """Remember that the tour ran, so it never opens again."""
     settings["onboarding_done"] = True
     settings["first_run"] = False
-
-
-def record_gesture_used(settings, gesture):
-    """Remember that the user has used a gesture.  No duplicates."""
-    used = settings.get("gestures_used") or []
-    if gesture not in used:
-        used.append(gesture)
-    settings["gestures_used"] = used
-
-
-def next_gesture_to_teach(settings):
-    """The next gesture to teach, or None when they are all used."""
-    used = settings.get("gestures_used") or []
-    for gesture in TEACH_ORDER:
-        if gesture not in used:
-            return gesture
-    return None

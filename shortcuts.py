@@ -238,6 +238,10 @@ def read_mac_hotkeys():
     """macOS's own shortcut settings, or {} when they can't be read."""
     try:
         import Foundation
+        # The system writes the settings to disk on its own schedule, so
+        # the copy in memory can be old: sync it, or a shortcut the user
+        # just switched on stays invisible here.
+        Foundation.CFPreferencesAppSynchronize("com.apple.symbolichotkeys")
         d = Foundation.CFPreferencesCopyAppValue(
             "AppleSymbolicHotKeys", "com.apple.symbolichotkeys")
         return {str(k): v for k, v in (d or {}).items()}
