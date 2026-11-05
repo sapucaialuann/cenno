@@ -18,6 +18,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import hand_desktop_switcher as core            # noqa: E402
 from test_dispatcher_displays import (           # noqa: E402
     PRIMARY, dispatcher_with)
+from test_face_zone import zone_engine          # noqa: E402
 from test_pointer_relative import make_point     # noqa: E402
 
 FPS = 30.0
@@ -442,7 +443,7 @@ def test_drag_cut_by_the_face_zone_releases_once():
     release per press.  It used to send a release on every exit from or
     entry to the face zone (30 releases for 13 presses in a recorded
     session); since #9 the drag simply carries on through the face."""
-    eng, log = engine(), []
+    eng, log = zone_engine(), []
     t = run(eng, make_point(200, 300), 0.5, 0.0, log)
     t = run(eng, pinch_point(200, 300, 0.10), 0.7, t, log)
     assert len(of(log, "mouse_down")) == 1, log

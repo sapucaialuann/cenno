@@ -75,6 +75,7 @@ DEFAULT_SETTINGS = {
     "display_mode": "current",
     "pointer_mode": core.POINTER_MODE,
     "scroll_mode": "tilt",                 # Windows only for now (#22)
+    "face_zone": core.FACE_ZONE_DEFAULT,   # the face blocks gestures only when on
 }
 
 # Where the pointer box reaches: the screen the cursor is on, or every
@@ -189,6 +190,8 @@ def load_settings():
         s["pointer_mode"] = DEFAULT_SETTINGS["pointer_mode"]
     if s.get("scroll_mode") not in [key for key, _ in SCROLL_MODES]:
         s["scroll_mode"] = DEFAULT_SETTINGS["scroll_mode"]
+    if not isinstance(s.get("face_zone"), bool):
+        s["face_zone"] = DEFAULT_SETTINGS["face_zone"]
     if raw and migrated != raw:
         save_settings(s)
     return s
@@ -201,6 +204,11 @@ def save_settings(s):
             json.dump(s, f, indent=2)
     except Exception as exc:
         print(f"WARN: could not save settings: {exc}")
+
+
+def log_face_zone(on):
+    """One log line for the face zone state (#43)."""
+    print(f"face zone: {'on' if on else 'off'}")
 
 
 # =============================================================================
@@ -453,7 +461,10 @@ class Tracker(threading.Thread):
                 rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 rgb.flags.writeable = False
                 res = hands.process(rgb)
-                face = face_tracker.update(rgb, w, h, now)
+                # Face detection costs CPU, so it only runs when the face
+                # zone is on (#43) or the push-to-talk check needs it.
+                face = (face_tracker.update(rgb, w, h, now)
+                        if self.engine.wants_face else None)
 
                 if res.multi_hand_landmarks:
                     hl = res.multi_hand_landmarks[0]
@@ -907,6 +918,15 @@ class CennoApp:
             save_settings(app.settings)
             app._sync_menu()
 
+        def on_toggle_face_zone(icon, item):
+            """Turn the face zone on or off (#43): on, the hand in front of
+            the face is ignored; off, the face never blocks anything."""
+            app.settings["face_zone"] = not app.settings["face_zone"]
+            app.tracker.engine.face_zone = app.settings["face_zone"]
+            save_settings(app.settings)
+            app._sync_menu()
+            log_face_zone(app.settings["face_zone"])
+
         def on_toggle_startup(icon, item):
             set_startup(not startup_enabled())
 
@@ -1108,6 +1128,9 @@ class CennoApp:
             MenuItem("Mouse control (point + pinch)",
                      on_toggle_mouse,
                      checked=lambda item: app.settings["mouse"]),
+            MenuItem("Ignore touches on the face",
+                     on_toggle_face_zone,
+                     checked=lambda item: app.settings["face_zone"]),
             MenuItem("Pointer", Menu(*pointer_items)),
             MenuItem("Scrolling", Menu(*scroll_items)),
             MenuItem("Displays", Menu(
@@ -1355,6 +1378,8 @@ class CennoApp:
             self.settings.get("display_mode", core.DISPLAY_MODE_CURRENT))
         self.tracker.engine.pointer_mode = self.settings["pointer_mode"]
         self.tracker.engine.scroll_mode = self.settings["scroll_mode"]
+        self.tracker.engine.face_zone = self.settings["face_zone"]
+        log_face_zone(self.settings["face_zone"])
         self.tracker.start()
 
         self.root = tk.Tk()

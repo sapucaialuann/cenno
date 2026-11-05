@@ -373,6 +373,10 @@ HORNS_REDO_SECONDS = 0.15      # once horns has fired, another pose held this lo
 # --- Face zone (motion gestures are ignored while the hand is at the face) ---
 # Scratching your face or resting your chin on your hand looks like a swipe
 # to the gesture engine, so the face box is a "do not move here" zone.
+# The zone is off by default (#43): it blocked clicks and scrolling whenever
+# the hand was in front of the face.  On, it brings back the old blocking
+# from #9, #25 and #26.
+FACE_ZONE_DEFAULT = False
 # The box is grown by this fraction of its width / height on each side.
 # 10% margin: tight enough so normal swipes and slaps beside the face work,
 # while still catching hand strokes near the face edges.
@@ -674,6 +678,7 @@ class GestureEngine:
     def __init__(self):
         self.paused = False
         self.scroll_mode = SCROLL_MODE     # "tilt", "joystick" or "drag"
+        self.face_zone = FACE_ZONE_DEFAULT # the face blocks gestures only when on
         self.last_fire = -1e9
         self.overview_until = 0.0
         self.last_open_time = -1e9
@@ -734,10 +739,12 @@ class GestureEngine:
 
     @property
     def wants_face(self):
-        """True when face detection is needed (hang loose seen or talking),
-        so the camera loop can skip it the rest of the time."""
-        return (self.ptt_active or self.pose == "shaka"
-                or self.raw_pose == "shaka")
+        """True when face detection is needed, so the camera loop can skip
+        it the rest of the time: the face zone is on (#43), or the
+        push-to-talk check needs the face box (hang loose seen or talking).
+        """
+        return (self.face_zone or self.ptt_active
+                or self.pose == "shaka" or self.raw_pose == "shaka")
 
     def _ptt_end(self, ev):
         if self.ptt_active:
@@ -976,8 +983,14 @@ class GestureEngine:
 
         # Hand at the face?  Motion gestures are ignored there (scratching
         # your face looks like a swipe), but hold poses still work.
-        self.near_face = near_face(pts, face)
-        self.pinch_at_face = pinch_at_face(pts, face)
+        # With the face zone off (#43) the face never blocks anything, so
+        # the checks are simply not made.
+        if self.face_zone:
+            self.near_face = near_face(pts, face)
+            self.pinch_at_face = pinch_at_face(pts, face)
+        else:
+            self.near_face = False
+            self.pinch_at_face = False
         if self.near_face:
             # Drop the scroll history too, so no flick is fired later on
             # from a stroke that started before the hand reached the face.
