@@ -36,6 +36,10 @@ HAND_SEEN_S = 2.0
 # How long the check mark stays up before the step moves on.
 AX_CHECK_DELAY_S = 1.0
 
+# How often the Mission Control shortcuts are read again.  Reading them
+# runs `defaults`, so it does not happen on every tick.
+SPACE_SHORTCUTS_READ_S = 2.0
+
 # The steps that wait for a gesture.
 GESTURE_STEPS = ("first_win", "pause", "second_gesture")
 
@@ -110,6 +114,15 @@ def hint_for(step, choice=None):
     return onboarding.HINTS.get(step, "")
 
 
+def should_leave_accessibility(granted, shortcuts_off):
+    """True when the accessibility step can move on by itself.
+
+    The Mission Control warning has to be read, so the step waits for the
+    user when those shortcuts are off.
+    """
+    return bool(granted) and not shortcuts_off
+
+
 # =============================================================================
 # AppKit bridge
 # =============================================================================
@@ -180,6 +193,7 @@ class OnboardingWindow:
         self._seen_since = None     # when the hand was first seen
         self._ax_granted_at = None  # when the permission came
         self._mc_off = []
+        self._shortcuts_read_at = None
         self._build()
         self.show_step(self.ob.step)
 
@@ -309,6 +323,7 @@ class OnboardingWindow:
         self._seen_since = None
         self._ax_granted_at = None
         self._mc_off = []
+        self._shortcuts_read_at = None
         self.host.tracker.onboarding_preview = (step == "camera")
         self.title.setStringValue_(STEP_TITLE.get(step, ""))
         self.body.setStringValue_(STEP_BODY.get(step, ""))
@@ -546,23 +561,33 @@ class OnboardingWindow:
     def _update_accessibility(self):
         """Wait for the Accessibility permission, then move on."""
         now = time.monotonic()
-        if self.host.accessibility_granted():
-            self.check.setStringValue_("✓ Accessibility is on")
-            if not self.ax_button.isHidden():
-                self.ax_button.setHidden_(True)
-                self._layout()
-            if self._ax_granted_at is None:
-                self._ax_granted_at = now
-            elif now - self._ax_granted_at >= AX_CHECK_DELAY_S:
-                self.advance()
-                return
-        else:
+        self._update_space_shortcuts()
+        granted = self.host.accessibility_granted()
+        if not granted:
             self.check.setStringValue_("Waiting for the permission...")
             self._ax_granted_at = None
-        self._update_space_shortcuts()
+            return
+        self.check.setStringValue_("✓ Accessibility is on")
+        if not self.ax_button.isHidden():
+            self.ax_button.setHidden_(True)
+            self._layout()
+        if not should_leave_accessibility(granted, self._mc_off):
+            # The Mission Control warning has to be read, so the step waits
+            # for the user (Continue or Skip).
+            self._ax_granted_at = None
+            return
+        if self._ax_granted_at is None:
+            self._ax_granted_at = now
+        elif now - self._ax_granted_at >= AX_CHECK_DELAY_S:
+            self.advance()
 
     def _update_space_shortcuts(self):
         """Warn when the Mission Control shortcuts are off."""
+        now = time.monotonic()
+        if (self._shortcuts_read_at is not None
+                and now - self._shortcuts_read_at < SPACE_SHORTCUTS_READ_S):
+            return
+        self._shortcuts_read_at = now
         off = space_shortcuts_off(shortcuts.read_mac_hotkeys())
         if off == self._mc_off:
             return

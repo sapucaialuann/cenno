@@ -627,7 +627,6 @@ class CennoApp(rumps.App):
         self.icon_set = False
         self.ax_ok = None
         self.onboarding_window = None
-        self.tour_pending = False
 
         self.status_item = rumps.MenuItem("Starting...")
         self.pause_item = rumps.MenuItem("Pause gestures", callback=self.toggle_pause, key="p")

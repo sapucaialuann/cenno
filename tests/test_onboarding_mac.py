@@ -55,6 +55,24 @@ def test_no_hint_for_the_other_steps():
     assert onboarding_mac.hint_for("second_gesture") == ""
 
 
+def test_the_accessibility_step_moves_on_when_all_is_ready():
+    # Access granted and the Mission Control shortcuts on: the step can
+    # move on by itself.
+    assert onboarding_mac.should_leave_accessibility(True, []) is True
+
+
+def test_the_accessibility_step_waits_for_the_permission():
+    assert onboarding_mac.should_leave_accessibility(False, []) is False
+
+
+def test_the_accessibility_step_waits_when_the_space_shortcuts_are_off():
+    # The warning about the Mission Control shortcuts has to be read, so
+    # the step waits for the user instead of flashing past.
+    off = ["Move left a space"]
+    assert onboarding_mac.should_leave_accessibility(True, off) is False
+    assert onboarding_mac.should_leave_accessibility(False, off) is False
+
+
 def test_every_step_has_a_title_and_a_body():
     for step in onboarding.STEPS_MACOS:
         assert onboarding_mac.STEP_TITLE[step]
