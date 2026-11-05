@@ -739,10 +739,12 @@ class GestureEngine:
 
     @property
     def wants_face(self):
-        """True when face detection is needed (hang loose seen or talking),
-        so the camera loop can skip it the rest of the time."""
-        return (self.ptt_active or self.pose == "shaka"
-                or self.raw_pose == "shaka")
+        """True when face detection is needed, so the camera loop can skip
+        it the rest of the time: the face zone is on (#43), or the
+        push-to-talk check needs the face box (hang loose seen or talking).
+        """
+        return (self.face_zone or self.ptt_active
+                or self.pose == "shaka" or self.raw_pose == "shaka")
 
     def _ptt_end(self, ev):
         if self.ptt_active:

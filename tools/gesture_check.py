@@ -12,6 +12,7 @@ while recording, or it will act on the gestures.
     .venv-build/bin/python tools/gesture_check.py record      # ~6 min, saves checks/<time>.json
     python3 tools/gesture_check.py natural                    # natural recording mode (no coaching)
     python3 tools/gesture_check.py report [checks/<file>.json] # replay + report (latest by default)
+    python3 tools/gesture_check.py report --face-zone on      # replay with the face zone on (#43)
 
 Each step waits until the gesture is recognised; the panel says why it is not.
 Keys in the recording window:  s = skip (cannot do it),  r = redo this step,  q = stop and save.
@@ -206,9 +207,10 @@ def cenno_tracking():
     return app_running()
 
 
-def new_engine(modes):
+def new_engine(modes, face_zone=core.FACE_ZONE_DEFAULT):
     eng = core.GestureEngine()
     eng.pointer_mode, eng.scroll_mode = modes
+    eng.face_zone = face_zone
     return eng
 
 
@@ -934,12 +936,12 @@ def record_natural(only=None, reps_override=None, hand_mode="both"):
 # Replay + report
 # =============================================================================
 
-def replay_step(rec, step_rec, modes=None):
+def replay_step(rec, step_rec, modes=None, face_zone=core.FACE_ZONE_DEFAULT):
     """Feed one recorded step through a fresh engine. Returns (counts,
     stats) for the judged part (after the get-ready lead)."""
     modes = modes or (rec.get("pointer_mode", core.POINTER_MODE),
                       rec.get("scroll_mode", core.SCROLL_MODE))
-    eng = new_engine(modes)
+    eng = new_engine(modes, face_zone)
     counts, poses = Counter(), Counter()
     pinch, spread, near = [], [], 0
     judged = 0
@@ -974,7 +976,7 @@ def pct(v, p):
     return v[min(len(v) - 1, int(p * len(v)))]
 
 
-def score_natural(rec):
+def score_natural(rec, face_zone=core.FACE_ZONE_DEFAULT):
     """Score a natural recording per gesture and hand.
 
     Returns a list of entries.  Each entry has hits, misses, wrong and
@@ -994,7 +996,7 @@ def score_natural(rec):
         # A fresh engine per gesture, like replay_step, but events are kept
         # with the repetition label that was active at the time.
         eng = new_engine((rec.get("pointer_mode", core.POINTER_MODE),
-                          rec.get("scroll_mode", core.SCROLL_MODE)))
+                          rec.get("scroll_mode", core.SCROLL_MODE)), face_zone)
         events = []
         for fr in sr.get("frames", []):
             t = fr["t"]
@@ -1061,11 +1063,12 @@ def score_natural(rec):
     return results
 
 
-def report_natural(rec, path=None):
+def report_natural(rec, path=None, face_zone=core.FACE_ZONE_DEFAULT):
     if path is not None:
         print(f"recording: {os.path.relpath(path, ROOT)}  ({rec['created']}, "
-              f"pointer={rec.get('pointer_mode')}, scroll={rec.get('scroll_mode')})\n")
-    scored = score_natural(rec)
+              f"pointer={rec.get('pointer_mode')}, scroll={rec.get('scroll_mode')}, "
+              f"face zone={'on' if face_zone else 'off'})\n")
+    scored = score_natural(rec, face_zone)
     total_hits = total_reps = total_wrong = total_wrong_hand = 0
     for item in scored:
         label = f"{item['id']} [{item['hand']} hand]"
@@ -1089,7 +1092,7 @@ def report_natural(rec, path=None):
           + (f"   {total_wrong_hand} wrong hand seen" if total_wrong_hand else ""))
 
 
-def report(path=None):
+def report(path=None, face_zone=core.FACE_ZONE_DEFAULT):
     if path is None:
         found = sorted(glob.glob(os.path.join(CHECKS_DIR, "check-*.json")) +
                        glob.glob(os.path.join(CHECKS_DIR, "natural-*.json")))
@@ -1099,14 +1102,15 @@ def report(path=None):
     with open(path) as f:
         rec = json.load(f)
     if rec.get("mode") == "natural":
-        return report_natural(rec, path)
+        return report_natural(rec, path, face_zone)
     by_id = {s["id"]: s for s in STEPS}
     print(f"recording: {os.path.relpath(path, ROOT)}  ({rec['created']}, "
-          f"pointer={rec.get('pointer_mode')}, scroll={rec.get('scroll_mode')})\n")
+          f"pointer={rec.get('pointer_mode')}, scroll={rec.get('scroll_mode')}, "
+          f"face zone={'on' if face_zone else 'off'})\n")
     passed = 0
     for sr in rec["steps"]:
         step = by_id.get(sr["id"], dict(expect={}, id=sr["id"]))
-        counts, st = replay_step(rec, sr)
+        counts, st = replay_step(rec, sr, face_zone=face_zone)
         missing, stray = judge(step, counts)
         ok = not missing and not stray and not sr.get("skipped")
         passed += ok
@@ -1160,6 +1164,15 @@ if __name__ == "__main__":
         print()
         report(p)
     elif cmd == "report":
-        report(sys.argv[2] if len(sys.argv) > 2 else None)
+        args = list(sys.argv[2:])
+        face_zone = core.FACE_ZONE_DEFAULT
+        if "--face-zone" in args:
+            i = args.index("--face-zone")
+            value = args[i + 1] if i + 1 < len(args) else ""
+            if value not in ("on", "off"):
+                sys.exit("--face-zone must be on or off")
+            face_zone = value == "on"
+            del args[i:i + 2]
+        report(args[0] if args else None, face_zone)
     else:
         sys.exit(__doc__)

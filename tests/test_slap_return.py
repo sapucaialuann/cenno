@@ -21,7 +21,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import hand_desktop_switcher as core            # noqa: E402
-from tests.test_face_zone import open_hand       # noqa: E402
+from tests.test_face_zone import open_hand, zone_engine  # noqa: E402
 import test_slap_wave as sw                      # noqa: E402
 
 FPS = 30.0
@@ -153,8 +153,7 @@ def test_a_fast_slap_across_a_face_box_switches_spaces():
 def test_slow_movement_at_the_face_does_nothing():
     """Scratching your face looks like a swipe, so slow movement there is
     still ignored."""
-    eng, log = core.GestureEngine(), []
-    eng.face_zone = True
+    eng, log = zone_engine(), []
     t = 0.0
     t = hold(eng, 320.0, 300.0, 0.4, t, log, face=FACE_BOX)
     t = stroke(eng, 200.0, 440.0, 1.2, t, log, face=FACE_BOX)

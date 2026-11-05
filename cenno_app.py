@@ -127,6 +127,8 @@ def load_settings():
             s[key] = None
     if s["dictation"] not in ("apple", "shortcut"):
         s["dictation"] = "apple"
+    if not isinstance(s["face_zone"], bool):
+        s["face_zone"] = DEFAULT_SETTINGS["face_zone"]
     if migrated != raw:
         save_settings(s)
     return s
@@ -139,6 +141,11 @@ def save_settings(s):
             json.dump(s, f, indent=2)
     except Exception as exc:
         print(f"WARN: could not save settings: {exc}")
+
+
+def log_face_zone(on):
+    """One log line for the face zone state (#43)."""
+    print(f"face zone: {'on' if on else 'off'}")
 
 
 # =============================================================================
@@ -299,7 +306,10 @@ class Tracker(threading.Thread):
                 rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 rgb.flags.writeable = False
                 res = hands.process(rgb)
-                face = face_tracker.update(rgb, w, h, now)
+                # Face detection costs CPU, so it only runs when the face
+                # zone is on (#43) or the push-to-talk check needs it.
+                face = (face_tracker.update(rgb, w, h, now)
+                        if self.engine.wants_face else None)
 
                 pts = None
                 if res.multi_hand_landmarks:
@@ -592,6 +602,7 @@ class CennoApp(rumps.App):
     def __init__(self):
         super().__init__(APP_NAME, title=APP_NAME, quit_button=None)
         self.settings = load_settings()
+        log_face_zone(self.settings["face_zone"])
         PREVIEW_PX[0], PREVIEW_PX[1] = self._preview_size()
         self.tracker = Tracker(self.settings)
         self.preview = None
@@ -1068,6 +1079,7 @@ class CennoApp(rumps.App):
         self.settings["face_zone"] = not self.settings["face_zone"]
         save_settings(self.settings)
         self._sync_checks()
+        log_face_zone(self.settings["face_zone"])
 
     def toggle_login(self, _):
         set_login_item(not login_item_enabled())
