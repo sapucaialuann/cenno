@@ -15,6 +15,8 @@ import hand_desktop_switcher as core            # noqa: E402
 
 core.SCROLL_MODE = "tilt"     # the Windows app's default; every engine here tilts
 
+from tests.test_face_zone import zone_engine   # noqa: E402
+
 FPS = 30.0
 W, H = 640, 480
 WRIST = (320.0, 300.0)
@@ -125,7 +127,7 @@ def test_hand_position_does_not_matter():
 
 def test_works_beside_the_face():
     face = (250, 150, 410, 330)            # a face box around the hand
-    eng, log = core.GestureEngine(), []
+    eng, log = zone_engine(), []
     run(eng, two_hand(70), 1.0, 0.0, log, face=face)
     assert [e for e in log if e[1] == "scroll_drag"], log
 

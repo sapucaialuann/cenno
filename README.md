@@ -26,7 +26,7 @@ platform has its own table below, and
 4. Enable Cenno under **System Settings > Privacy & Security > Accessibility** (needed to send shortcuts, scroll and move the mouse), then reopen it.
 5. In **System Settings > Keyboard > Keyboard Shortcuts > Mission Control**, make sure "Move left/right a space", "Mission Control" and "Application windows" are on.
 
-Cenno lives in the menu bar (hand icon): on/off (turns the camera off without quitting), pause, camera preview on/off and corner position, mouse control on/off, open at login, gesture list. With two or more displays connected there is also a **Displays** menu: **Current display** keeps the cursor on the screen it is already on, **All displays** lets the hand reach every screen, and **Move pointer to next display** hops the cursor over. Scrolling and Space switching follow the screen your hand is on.
+Cenno lives in the menu bar (hand icon): on/off (turns the camera off without quitting), pause, camera preview on/off and corner position, mouse control on/off, open at login, gesture list. With two or more displays connected there is also a **Displays** menu: **Current display** keeps the cursor on the screen it is already on, **All displays** lets the hand reach every screen, and **Move pointer to next display** hops the cursor over. Scrolling and Space switching follow the screen your hand is on. **Ignore touches on the face** is off by default; turn it on to make Cenno ignore the hand while it is in front of your face (no click, no scroll and no swipe there).
 
 ## Several displays
 
@@ -160,6 +160,7 @@ That writes `dist/Cenno-<version>.dmg`.
 Cenno on Windows is intentionally Windows-native rather than a macOS clone:
 
 - **System tray, not a menu bar.** Windows has no menu bar, so Cenno lives in the system tray (hand icon): on/off, pause, camera preview, mouse control, open at startup, gesture list.
+- **Ignore touches on the face** is in the tray menu too, off by default. Turn it on to make Cenno ignore the hand while it is in front of your face (no click, no scroll and no swipe there).
 - **Windows instead of Spaces.** A slap switches windows with Alt+Tab: the first slap goes to the last window, and Cenno keeps Alt held for a moment, so more slaps step through the switcher (one way forward, the other back). About 3 seconds after the last slap, or at once with any other gesture, the chosen window comes to the front.
 - **Task View instead of Mission Control.** Swipe up opens Task View (`Win+Tab`), not Mission Control.
 - **Show desktop instead of App windows.** Swipe down shows the desktop (`Win+D`), since Windows has no app-windows overview.
