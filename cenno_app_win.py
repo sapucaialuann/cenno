@@ -521,9 +521,11 @@ class Tracker(threading.Thread):
                 drawing.DrawingSpec(color=col("trace"), thickness=2, circle_radius=2),
                 drawing.DrawingSpec(color=col("ink"), thickness=1))
             face = self.engine.debug.get("face_box")
-            if self.engine.ptt_active and face is not None:
+            if face is not None:
+                # The face box, always: a missing or wrong detection is
+                # then visible in the preview.
                 cv2.rectangle(frame, (int(face[0]), int(face[1])),
-                              (int(face[2]), int(face[3])), col("trace"), 2)
+                              (int(face[2]), int(face[3])), col("line-strong"), 1)
             style = pointer_box_style(self.engine.pose, self.settings["mouse"],
                                       self.engine.pointer_mode, self.engine.pinched)
             if style is not None:

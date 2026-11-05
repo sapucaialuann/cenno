@@ -323,9 +323,9 @@ def test_point_without_a_face_moves_the_pointer():
     assert "pointer_move" in names(log), log
 
 
-def pinch_hand(cy=300):
+def pinch_hand(cy=300, scale=1.0):
     """The pointer hand with the thumb tip on the index tip."""
-    pts = point_hand(cy=cy)
+    pts = point_hand(cy=cy, scale=scale)
     pts[4] = (pts[8][0] - 5, pts[8][1] + 5)
     return pts
 
