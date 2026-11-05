@@ -387,6 +387,14 @@ FACE_PALM_INDICES = (0, 5, 9, 13, 17)
 FACE_EVERY_N_FRAMES = 3
 # How long a face box stays valid after the last detection (seconds).
 FACE_KEEP_SECONDS = 0.5
+# A hand touching the face is at the face's distance from the camera, so
+# its palm looks about as wide as the face is (a palm is ~9 cm, the face
+# box ~12 cm: a ratio of ~0.8).  A hand in front of the face is closer to
+# the camera and looks bigger, so it is not at the face: on a laptop camera
+# the face fills the middle of the frame and the hand points, clicks and
+# scrolls right through it (#26).  Raise this to block more, lower it to
+# let the hand closer to the face click.
+FACE_REST_PALM_RATIO = 0.85
 
 # --- HUD ---
 ACTION_FLASH_SECONDS = 1.0
@@ -577,6 +585,29 @@ def pinch_at_face(pts, face):
                for i in (4, 8))
 
 
+def face_ratio(palm, face):
+    """How wide the hand looks next to the face.  1.0 means the hand is at
+    the face's distance from the camera, more means the hand is closer."""
+    if not face:
+        return 0.0
+    width = face[2] - face[0]
+    return palm / width if width > 0 else 0.0
+
+
+def at_face(pts, face, palm):
+    """True when the hand really is at the face.
+
+    The hand has to overlap the face box and be at the face's distance from
+    the camera: a hand pointing or scrolling in front of the face is closer
+    to the camera and looks bigger, so it is not at the face (#26).  The
+    scratch that looks like a swipe happens with the hand on the face, at
+    the face's distance, so it is still caught.
+    """
+    if not face or face_ratio(palm, face) > FACE_REST_PALM_RATIO:
+        return False
+    return near_face(pts, face)
+
+
 class OneEuro:
     """One Euro filter (Casiez et al. 2012): the cutoff frequency rises with
     speed, so a still hand is heavily smoothed and a moving one is not."""
@@ -686,6 +717,9 @@ class GestureEngine:
         self.last_click_pos = (0.0, 0.0)
         self.near_face = False
         self.pinch_at_face = False
+        self.at_face = False
+        self.press_blocked = False
+        self.face_ratio = 0.0
         # Copied out of the constant so the apps can switch modes at runtime.
         self.pointer_mode = POINTER_MODE
         # The cursor in relative mode outlives the pointing session, so it
@@ -710,6 +744,9 @@ class GestureEngine:
         self.ema_palm = None
         self.near_face = False
         self.pinch_at_face = False
+        self.at_face = False
+        self.press_blocked = False
+        self.face_ratio = 0.0
         self.ready_since = None
         self.buf = deque()
         self.armed = True
@@ -835,6 +872,7 @@ class GestureEngine:
         self.pinched = False
         self.pinch_votes = 0
         self.pinch_s = None
+        self._face_block_logged = False    # the log says it once per try
         self.pinch_low = PINCH_OFF          # closest point of the current pinch
         self.dragging = False
         self.pinch_start = 0.0
@@ -978,7 +1016,19 @@ class GestureEngine:
         # your face looks like a swipe), but hold poses still work.
         self.near_face = near_face(pts, face)
         self.pinch_at_face = pinch_at_face(pts, face)
-        if self.near_face:
+        # The hand can be in front of the face without being on it: on a
+        # laptop camera the face fills the middle of the frame, and the
+        # hand points, clicks and scrolls right through it.  Only a hand at
+        # the face's distance is at the face (#26).  The raw palm size is
+        # used, not the smoothed one, so the rule follows the hand at once.
+        self.face_ratio = face_ratio(raw_palm, face)
+        self.at_face = at_face(pts, face, raw_palm)
+        # A new press is refused at the face as well: scratching or
+        # rubbing an eye can look like a pinch (#9, #25).
+        self.press_blocked = (self.at_face
+                              or (self.pinch_at_face
+                                  and self.face_ratio <= FACE_REST_PALM_RATIO))
+        if self.at_face:
             # Drop the scroll history too, so no flick is fired later on
             # from a stroke that started before the hand reached the face.
             self.scroll_hist.clear()
@@ -991,8 +1041,9 @@ class GestureEngine:
                     and r["index"] >= POINT_STAY_MIN_RATIO):
                 raw_pose = "point"
         self.debug = dict(feats, raw=raw_pose, palm=shape_palm, mpalm=palm,
-                          face=self.near_face)
-        if not self.near_face:
+                          face=self.near_face, at_face=self.at_face,
+                          face_box=face, face_ratio=self.face_ratio)
+        if not self.at_face:
             self._was_at_face = False
 
         # Pose stability filter.
@@ -1055,7 +1106,6 @@ class GestureEngine:
             self.head_away = 0 if near else self.head_away + 1
             self.debug["head"] = near
             self.debug["head_why"] = why
-            self.debug["face_box"] = face
             if self.ptt_active and (self.head_away >= HEAD_LEAVE_FRAMES
                                     or now - self.ptt_since >= PTT_MAX_SECONDS):
                 self._ptt_end(ev)
@@ -1175,7 +1225,7 @@ class GestureEngine:
             else:
                 self.knob_angle += KNOB_ANGLE_ALPHA * wrap180(ang - self.knob_angle)
                 delta = (self.knob_angle - self.knob_ref) * VOLUME_DIRECTION
-                if self.near_face:
+                if self.at_face:
                     # Twisting at the face does nothing: re-base the knob so
                     # the twist does not fire all at once when the hand
                     # comes back out of the face box.
@@ -1211,11 +1261,11 @@ class GestureEngine:
         if self.pose == "two" and warmed and step is not None:
             if self.scroll_mode == "tilt":
                 self._tilt_step(pts, palm, step, now, ev)
-            elif not self.near_face:
+            elif not self.at_face:
                 self._scroll_step(step, now, ev, cy, palm)
 
         # Wave: open or flat hand side to side a few times -> lock screen.
-        if self.pose in ("open", "flat") and warmed and not self.near_face:
+        if self.pose in ("open", "flat") and warmed and not self.at_face:
             if self._wave_step(cx / palm, now):
                 ev.append(("lock", 1))
                 self.buf.clear()
@@ -1226,19 +1276,19 @@ class GestureEngine:
 
         # Swipes (open / flat hand: 4 directions; two fingers: horizontal nav).
         family = self.pose if self.pose in ("open", "flat", "two") else None
-        if self.near_face and not self._face_pass(step, now):
+        if self.at_face and not self._face_pass(step, now):
             # Motion made at the face must not carry over once the hand
             # leaves it, so the buffer is dropped every frame in there.
             family = None
             self.buf.clear()
-        elif self.near_face and not self._was_at_face:
+        elif self.at_face and not self._was_at_face:
             # The hand just came into the face box.  A slap goes by at
             # speed, so its stroke is kept; a hand that is reaching for
             # the face starts its motion here, and the motion from before
             # it does not belong to that stroke.
             if step is None or abs(step[0]) / step[2] < FACE_ENTER_SPEED_PALMS:
                 self.buf.clear()
-        self._was_at_face = self.near_face
+        self._was_at_face = self.at_face
         # A hand that is sweeping in from the edge counts as a swipe even
         # though the warm-up has not finished.
         swipe_ready = warmed or entry_sweep
@@ -1454,11 +1504,19 @@ class GestureEngine:
         release_at = min(PINCH_OFF, self.pinch_low + PINCH_RELEASE_RISE)
         # No new press at the face: scratching or rubbing an eye can look
         # like a pinch.  The cursor still moves there, and a drag already
-        # held carries on (#9).  The pinch fingers count on their own: a
-        # hand on the mouth has its palm below the face (#25).
+        # held carries on (#9).  A hand *in front of* the face is not at
+        # the face, so the click works there (#26).
         want = ((pinch <= PINCH_ON and index_ratio >= POINT_INDEX_MIN_RATIO
-                 and not self.near_face and not self.pinch_at_face)
+                 and not self.press_blocked)
                 if not self.pinched else not (pinch >= release_at))
+        if not self.pinched and pinch <= PINCH_ON and self.press_blocked:
+            # Say why the click did not happen, so the log shows it.
+            if not self._face_block_logged:
+                self._face_block_logged = True
+                print(f"click blocked: the hand is at the face "
+                      f"(palm/face {self.face_ratio:.2f})")
+        else:
+            self._face_block_logged = False
         self.pinch_votes = self.pinch_votes + 1 if want != self.pinched else 0
         flip = self.pinch_votes >= (PINCH_RELEASE_FRAMES if self.pinched else 1)
         if flip:
