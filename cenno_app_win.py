@@ -15,6 +15,7 @@ Threads
 import io
 import json
 import os
+import queue
 import sys
 import threading
 import time
@@ -37,6 +38,8 @@ import hand_desktop_switcher as core
 from pointer_box import pointer_box_style
 import app_version
 import headzone
+import onboarding
+import onboarding_win
 import recorder_win
 import shortcuts
 import theme
@@ -172,6 +175,12 @@ def setup_logging():
 
 
 def load_settings():
+    """The user's settings, and whether the settings file was already there.
+
+    An existing settings file means an existing user: the welcome tour
+    only opens for a brand-new one.
+    """
+    existed = os.path.exists(SETTINGS_PATH)
     try:
         with open(SETTINGS_PATH, encoding="utf-8") as f:
             raw = json.load(f)
@@ -194,7 +203,7 @@ def load_settings():
         s["face_zone"] = DEFAULT_SETTINGS["face_zone"]
     if raw and migrated != raw:
         save_settings(s)
-    return s
+    return s, existed
 
 
 def save_settings(s):
@@ -377,6 +386,10 @@ class Tracker(threading.Thread):
         self.fps = 0.0
         self.dark = True            # set from the main thread (tick)
         self.reduce_motion = False
+        # The welcome tour watches the engine and the camera from here.
+        self.onboarding_events = queue.Queue()
+        self.onboarding_frame = None
+        self.onboarding_preview = False
 
     def set_paused(self, paused):
         self.engine.paused = paused
@@ -388,6 +401,11 @@ class Tracker(threading.Thread):
     def displays_count(self):
         """How many screens Windows reports right now."""
         return self.dispatcher.layout.count
+
+    @property
+    def hand_tracked(self):
+        """True when the camera sees a hand right now."""
+        return self.engine.pose != "none"
 
     def refresh_displays(self):
         """Re-read the screen layout.  True when it changed (a display was
@@ -476,6 +494,10 @@ class Tracker(threading.Thread):
                 events = self.dispatcher.while_locked(events, now)
 
                 for name, n in events:
+                    if name in onboarding.ONBOARDING_EVENTS:
+                        # The tour watches the same events, also the ones
+                        # the mouse setting switches off.
+                        self.onboarding_events.put(name)
                     if name in POINTER_EVENTS and not self.settings["mouse"]:
                         continue
                     self.dispatcher.submit(name, n)
@@ -507,10 +529,11 @@ class Tracker(threading.Thread):
                         print(f"fps: {self.fps:.1f}")   # for diagnosing slow tracking
                         fps_logged = now
 
-                if self.settings["preview"]:
+                if self.settings["preview"] or self.onboarding_preview:
                     jpg = self._make_preview(cv2, drawing, mp_hands, frame, hl, now)
                     with self.lock:
                         self.preview_frame = jpg
+                        self.onboarding_frame = jpg
         finally:
             if cap is not None:
                 cap.release()
@@ -825,7 +848,9 @@ class TkPreview:
 
 class CennoApp:
     def __init__(self):
-        self.settings = load_settings()
+        self.settings, settings_existed = load_settings()
+        # A brand-new user gets the welcome tour, once the app is up.
+        self.tour_pending = onboarding.needs_onboarding(self.settings, settings_existed)
         self.tracker = Tracker(self.settings)
         self.root = None
         self.preview = None
@@ -836,6 +861,7 @@ class CennoApp:
         self._icon_base = self._load_icon_img()
         self._icon_state_cur = None
         self._gesture_notified = False
+        self.onboarding_window = None
 
     # --- helpers ---
 
@@ -1042,6 +1068,10 @@ class CennoApp:
                     action_label="Support on Ko-fi",
                 ))
 
+        def on_show_onboarding(icon, item):
+            if app.root:
+                app.root.after(0, app.show_onboarding)
+
         corner_items = [
             MenuItem(label, make_corner_cb(key),
                      checked=lambda item, k=key: app.settings["preview_corner"] == k,
@@ -1150,6 +1180,7 @@ class CennoApp:
                      checked=lambda item: startup_enabled()),
             MenuItem("Register cenno:// protocol", on_register_protocol),
             Menu.SEPARATOR,
+            MenuItem("Show the welcome tour again", on_show_onboarding),
             MenuItem("Support Cenno ☕", on_support),
             MenuItem(f"About {APP_NAME} {VERSION}", on_about),
             MenuItem(f"Quit {APP_NAME}", on_quit),
@@ -1259,22 +1290,36 @@ class CennoApp:
             self.settings["dictation_ptt"] = sc
             self._save_dictation()
 
-    def _show_welcome(self):
-        """One-time first-run welcome dialog with camera permission guidance."""
-        show_dialog(
-            self.root,
-            f"Welcome to {APP_NAME}",
-            "Cenno needs access to your webcam to track hand gestures.\n\n"
-            "1. Open Windows Settings > Privacy & security > Camera\n"
-            "   and make sure camera access is allowed.\n"
-            "2. You can also jump there from the tray icon: "
-            "\"Open Camera settings\".\n\n"
-            "No Accessibility permission is needed on Windows. Gestures work\n"
-            "right away once the camera is allowed.",
-            dark=self.dark,
-        )
-        self.settings["first_run"] = False
+    # --- the welcome tour (#40) ---
+    def show_onboarding(self, _sender=None):
+        """Open the welcome tour window."""
+        try:
+            if self.onboarding_window is None:
+                self.onboarding_window = onboarding_win.OnboardingWindow(self)
+            else:
+                self.onboarding_window.restart()
+            self.onboarding_window.show()
+        except Exception:
+            print("WARN: the welcome tour could not open:\n" + traceback.format_exc())
+
+    def persist_settings(self):
+        """Write the settings back to disk."""
         save_settings(self.settings)
+
+    def _feed_onboarding(self):
+        """Give the engine's events to the welcome tour, when it is open.
+
+        The camera thread only puts the events in the queue; they are
+        handled here, on the tkinter main thread.
+        """
+        events = self.tracker.onboarding_events
+        while True:
+            try:
+                name = events.get_nowait()
+            except queue.Empty:
+                return
+            if self.onboarding_window is not None:
+                self.onboarding_window.on_event(name)
 
     # --- periodic ticks (tkinter main thread) ---
 
@@ -1352,6 +1397,13 @@ class CennoApp:
             ):
                 self._gesture_notified = True
                 self._notify("Cenno", f"First gesture: {self.tracker.last_action}")
+            self._feed_onboarding()
+            if self.onboarding_window is not None:
+                self.onboarding_window.tick()
+            elif self.tour_pending:
+                # The first tick: the app is up, so the tour can open.
+                self.tour_pending = False
+                self.show_onboarding()
         except Exception:
             pass
         self.root.after(250, self._tick_status)
@@ -1407,10 +1459,6 @@ class CennoApp:
 
         self.icon = self._build_tray()
         threading.Thread(target=self.icon.run, daemon=True, name="tray").start()
-
-        # First-run welcome: camera permission guidance (one time).
-        if self.settings.get("first_run"):
-            self._show_welcome()
 
         self.root.after(250, self._tick_status)
         self.root.after(33, self._tick_preview)

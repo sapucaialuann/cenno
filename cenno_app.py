@@ -13,6 +13,7 @@ Threads
 
 import json
 import os
+import queue
 import sys
 import threading
 import time
@@ -24,6 +25,8 @@ import hand_desktop_switcher as core
 from pointer_box import pointer_box_style
 import app_version
 import headzone
+import onboarding
+import onboarding_mac
 import recorder_mac
 import shortcuts
 import theme
@@ -115,11 +118,17 @@ def setup_logging():
 
 
 def load_settings():
+    """The user's settings, and whether the settings file was already there.
+
+    An existing settings file means an existing user: the welcome tour
+    only opens for a brand-new one.
+    """
+    existed = os.path.exists(SETTINGS_PATH)
     try:
         with open(SETTINGS_PATH) as f:
             raw = json.load(f)
     except Exception:
-        return dict(DEFAULT_SETTINGS)
+        return dict(DEFAULT_SETTINGS), existed
     migrated = shortcuts.migrate_dictation(raw, "Darwin", os.path.isdir(WISPR_APP))
     s = {**DEFAULT_SETTINGS, **migrated}
     for key in ("dictation_toggle", "dictation_ptt"):
@@ -131,7 +140,7 @@ def load_settings():
         s["face_zone"] = DEFAULT_SETTINGS["face_zone"]
     if migrated != raw:
         save_settings(s)
-    return s
+    return s, existed
 
 
 def save_settings(s):
@@ -215,6 +224,10 @@ class Tracker(threading.Thread):
         self.camera_requested = False
         self.dark = False                  # set from the main thread (tick_ui)
         self.reduce_motion = False
+        # The welcome tour watches the engine and the camera from here.
+        self.onboarding_events = queue.Queue()
+        self.onboarding_frame = None
+        self.onboarding_preview = False
 
     # --- helpers ---
     def set_paused(self, paused):
@@ -225,6 +238,11 @@ class Tracker(threading.Thread):
     def displays_count(self):
         """How many screens macOS reports right now."""
         return self.dispatcher.layout.count
+
+    @property
+    def hand_tracked(self):
+        """True when the camera sees a hand right now."""
+        return self.engine.pose != "none"
 
     def refresh_displays(self):
         """Re-read the screen layout.  True when it changed (a display was
@@ -322,6 +340,10 @@ class Tracker(threading.Thread):
                 events = self.dispatcher.while_locked(events, now)
 
                 for name, n in events:
+                    if name in onboarding.ONBOARDING_EVENTS:
+                        # The tour watches the same events, also the ones
+                        # the mouse setting switches off.
+                        self.onboarding_events.put(name)
                     if name in POINTER_EVENTS and not self.settings["mouse"]:
                         continue
                     self.dispatcher.submit(name, n)
@@ -352,10 +374,11 @@ class Tracker(threading.Thread):
                         print(f"fps: {self.fps:.1f}")   # for diagnosing slow tracking
                         fps_logged = now
 
-                if self.settings["preview"]:
+                if self.settings["preview"] or self.onboarding_preview:
                     jpg = self._make_preview(cv2, drawing, mp_hands, frame, hl, now)
                     with self.lock:
                         self.preview_frame = jpg
+                        self.onboarding_frame = jpg
         finally:
             if cap is not None:
                 cap.release()
@@ -601,13 +624,16 @@ class MiniPreview:
 class CennoApp(rumps.App):
     def __init__(self):
         super().__init__(APP_NAME, title=APP_NAME, quit_button=None)
-        self.settings = load_settings()
+        self.settings, settings_existed = load_settings()
+        # A brand-new user gets the welcome tour, once the app is up.
+        self.tour_pending = onboarding.needs_onboarding(self.settings, settings_existed)
         log_face_zone(self.settings["face_zone"])
         PREVIEW_PX[0], PREVIEW_PX[1] = self._preview_size()
         self.tracker = Tracker(self.settings)
         self.preview = None
         self.icon_set = False
         self.ax_ok = None
+        self.onboarding_window = None
 
         self.status_item = rumps.MenuItem("Starting...")
         self.pause_item = rumps.MenuItem("Pause gestures", callback=self.toggle_pause, key="p")
@@ -659,6 +685,8 @@ class CennoApp(rumps.App):
             self.dictation_menu.add(item)
         self.ax_item = rumps.MenuItem("Allow Accessibility...", callback=self.fix_accessibility)
         self.login_item = rumps.MenuItem("Open at login", callback=self.toggle_login)
+        self.tour_item = rumps.MenuItem("Show the welcome tour again",
+                                       callback=self.show_onboarding)
         gestures = rumps.MenuItem("Gestures")
         for line in gesture_lines():
             gestures.add(rumps.MenuItem(line))
@@ -716,7 +744,7 @@ class CennoApp(rumps.App):
         if self.displays_menu is not None:
             menu.append(self.displays_menu)
         menu += [self.dictation_menu, None, self.gestures_menu, self.perms_menu,
-                 self.login_item, None,
+                 self.login_item, self.tour_item, None,
                  rumps.MenuItem("Support Cenno on Ko-fi",
                                 callback=lambda _: os.system(f"open '{SUPPORT_URL}'")),
                  rumps.MenuItem(f"About {APP_NAME} {VERSION}", callback=self.show_about),
@@ -823,11 +851,14 @@ class CennoApp(rumps.App):
             if self.preview:
                 self.preview.apply_theme(dark)
         if self.ax_ok is None:
-            # First tick: ask macOS (shows its own prompt if it can) and,
-            # if still not allowed, explain and offer to open the settings.
-            self.ax_ok = accessibility_trusted(prompt=True)
+            # First tick: ask macOS.  While the welcome tour is up, its
+            # Accessibility step asks for the permission itself, so there
+            # is no system prompt and no blocking alert here.
+            tour = self.tour_pending or (self.onboarding_window is not None
+                                         and self.onboarding_window.running)
+            self.ax_ok = accessibility_trusted(prompt=not tour)
             print(f"accessibility trusted at start: {self.ax_ok}")
-            if not self.ax_ok:
+            if not self.ax_ok and not tour:
                 self.fix_accessibility(None)
         else:
             ok = accessibility_trusted()
@@ -847,6 +878,13 @@ class CennoApp(rumps.App):
         if not self.icon_set or getattr(self, "_icon_paused", None) != dim:
             self._icon_paused = dim
             self._set_icon(dim)
+        self._feed_onboarding()
+        if self.onboarding_window is not None:
+            self.onboarding_window.tick()
+        elif self.tour_pending:
+            # The first tick: the app is up, so the tour can open.
+            self.tour_pending = False
+            self.show_onboarding(None)
 
     def tick_preview(self, _):
         if self.preview is None:
@@ -922,6 +960,49 @@ class CennoApp(rumps.App):
             ok="Open Settings", cancel="Later")
         if choice == 1:
             open_settings_pane("Privacy_Accessibility")
+
+    # --- the welcome tour (#40) ---
+    def _feed_onboarding(self):
+        """Give the engine's events to the welcome tour, when it is open."""
+        events = self.tracker.onboarding_events
+        while True:
+            try:
+                name = events.get_nowait()
+            except queue.Empty:
+                return
+            if self.onboarding_window is not None:
+                self.onboarding_window.on_event(name)
+
+    def show_onboarding(self, _sender=None):
+        """Open the welcome tour window."""
+        try:
+            if self.onboarding_window is None:
+                self.onboarding_window = onboarding_mac.OnboardingWindow(self)
+            else:
+                self.onboarding_window.restart()
+            self.onboarding_window.show()
+        except Exception:
+            print("WARN: the welcome tour could not open:\n" + traceback.format_exc())
+
+    def persist_settings(self):
+        """Write the settings back to disk."""
+        save_settings(self.settings)
+
+    def accessibility_granted(self):
+        """True when macOS lets Cenno press keys and move the mouse."""
+        return bool(self.ax_ok)
+
+    def request_accessibility(self):
+        """Ask macOS for the Accessibility permission (its own prompt)."""
+        accessibility_trusted(prompt=True)
+
+    def open_accessibility_settings(self):
+        """Open the Accessibility pane of System Settings."""
+        open_settings_pane("Privacy_Accessibility")
+
+    def open_keyboard_shortcuts(self):
+        """Open the Keyboard Shortcuts pane of System Settings."""
+        os.system("open 'x-apple.systempreferences:com.apple.preference.keyboard?Shortcuts'")
 
     # --- callbacks ---
     def toggle_pause(self, _):
