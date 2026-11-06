@@ -209,3 +209,7 @@ Cenno on Windows is intentionally Windows-native rather than a macOS clone:
 ## Support
 
 Cenno is free. If it helps you, you can support it on [Ko-fi](https://ko-fi.com/sapucaialuann). You can also find it in the tray menu under Support Cenno on Ko-fi.
+
+## License
+
+Cenno is licensed under the [PolyForm Noncommercial License 1.0.0](LICENSE). You may use, copy and change it for personal and other noncommercial purposes. Commercial use needs a separate license: ask through [GitHub](https://github.com/sapucaialuann/cenno/issues).
